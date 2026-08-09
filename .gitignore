@@ -1,0 +1,14 @@
+# Node modules and build files
+frontend/node_modules/
+frontend/dist/
+
+# Python environments and cache
+backend/venv/
+backend/__pycache__/
+
+# Personal Data and Uploads (CRITICAL)
+backend/finance.db
+backend/uploads/
+
+# OS files
+.DS_Store
