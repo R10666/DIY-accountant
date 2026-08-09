@@ -5,25 +5,34 @@ import History from './components/History';
 import Subscriptions from './components/Subscriptions';
 import EntryModal from './components/EntryModal';
 import TransactionDetails from './components/TransactionDetails';
+import TagsManager from './components/TagsManager'; // Import the new component
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [transactions, setTransactions] = useState([]);
+  const [tags, setTags] = useState([]); // NEW: State for tags
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedTx, setSelectedTx] = useState(null); // Tracks the currently viewed item
+  const [selectedTx, setSelectedTx] = useState(null);
 
-  const fetchTransactions = async () => {
+  const fetchData = async () => {
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/transactions');
-      const data = await response.json();
-      setTransactions(data.transactions);
+      // Fetch both transactions AND tags simultaneously
+      const [txRes, tagsRes] = await Promise.all([
+        fetch('http://127.0.0.1:8000/api/transactions'),
+        fetch('http://127.0.0.1:8000/api/tags')
+      ]);
+      const txData = await txRes.json();
+      const tagsData = await tagsRes.json();
+      
+      setTransactions(txData.transactions);
+      setTags(tagsData.tags);
     } catch (error) {
-      console.error("Failed to fetch transactions:", error);
+      console.error("Failed to fetch data:", error);
     }
   };
 
   useEffect(() => {
-    fetchTransactions();
+    fetchData();
   }, []);
 
   const currentBalance = transactions.reduce((acc, curr) => {
@@ -32,13 +41,12 @@ export default function App() {
     return acc - (curr.amount - refunded);
   }, 0);
 
-  // If a transaction is selected, hide the global "New Purchase" button and show Details
   if (selectedTx) {
     return (
       <div className="min-h-screen bg-slate-900 text-slate-100 font-sans">
         <Navigation activeTab={activeTab} setActiveTab={(tab) => { setActiveTab(tab); setSelectedTx(null); }} />
         <main className="max-w-7xl mx-auto p-6">
-          <TransactionDetails t={selectedTx} onBack={() => setSelectedTx(null)} refreshData={fetchTransactions} />
+          <TransactionDetails t={selectedTx} tagsList={tags} onBack={() => setSelectedTx(null)} refreshData={fetchData} />
         </main>
       </div>
     );
@@ -55,12 +63,14 @@ export default function App() {
           </button>
         </div>
 
-        {activeTab === 'dashboard' && <Dashboard currentBalance={currentBalance} refreshData={fetchTransactions} />}
-        {activeTab === 'history' && <History transactions={transactions} onViewDetails={setSelectedTx} />}
+        {activeTab === 'dashboard' && <Dashboard currentBalance={currentBalance} refreshData={fetchData} />}
+        {activeTab === 'history' && <History transactions={transactions} tagsList={tags} onViewDetails={setSelectedTx} />}
         {activeTab === 'subscriptions' && <Subscriptions transactions={transactions} onViewDetails={setSelectedTx} />}
+        {/* Render the new Tags page */}
+        {activeTab === 'tags' && <TagsManager tags={tags} refreshTags={fetchData} />}
       </main>
 
-      {isModalOpen && <EntryModal closeModal={() => setIsModalOpen(false)} refreshData={fetchTransactions} />}
+      {isModalOpen && <EntryModal availableTags={tags} closeModal={() => setIsModalOpen(false)} refreshData={fetchData} />}
     </div>
   );
 }

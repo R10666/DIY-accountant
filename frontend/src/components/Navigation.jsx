@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, History, Repeat, Trophy } from 'lucide-react';
+import { LayoutDashboard, History, Repeat, Trophy, Tag } from 'lucide-react';
 
 export default function Navigation({ activeTab, setActiveTab }) {
   return (
@@ -19,6 +19,10 @@ export default function Navigation({ activeTab, setActiveTab }) {
           </button>
           <button onClick={() => setActiveTab('subscriptions')} className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${activeTab === 'subscriptions' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-700 text-slate-400'}`}>
             <Repeat size={18} /> Subscriptions
+          </button>
+          {/* NEW TAGS BUTTON */}
+          <button onClick={() => setActiveTab('tags')} className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${activeTab === 'tags' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-700 text-slate-400'}`}>
+            <Tag size={18} /> Tags
           </button>
         </div>
       </div>

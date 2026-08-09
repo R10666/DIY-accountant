@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
 
-export default function EntryModal({ closeModal, refreshData }) {
-  const [file, setFile] = useState(null); // New state for actual file
+export default function EntryModal({ availableTags, closeModal, refreshData }) {
+  const [file, setFile] = useState(null);
+  
   const [formData, setFormData] = useState({
     title: '',
     amount: '',
@@ -11,29 +12,32 @@ export default function EntryModal({ closeModal, refreshData }) {
     custom_days: '',
     url: '',
     purchase_date: new Date().toISOString().split('T')[0],
-    notes: ''
+    notes: '',
+    tags: []
   });
+
+  const toggleTag = (tagName) => {
+    setFormData(prev => ({
+      ...prev,
+      tags: prev.tags.includes(tagName) 
+        ? prev.tags.filter(t => t !== tagName) 
+        : [...prev.tags, tagName]
+    }));
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
     let finalBillingCycle = null;
     if (formData.is_subscription) {
       finalBillingCycle = formData.billing_cycle === 'custom' ? `${formData.custom_days} days` : formData.billing_cycle;
     }
 
     let receiptUrl = null;
-
-    // ACTUAL FILE UPLOAD LOGIC
     if (file) {
       const uploadData = new FormData();
       uploadData.append("file", file);
-      
       try {
-        const uploadRes = await fetch('http://127.0.0.1:8000/api/upload', {
-          method: 'POST',
-          body: uploadData
-        });
+        const uploadRes = await fetch('http://127.0.0.1:8000/api/upload', { method: 'POST', body: uploadData });
         const uploadJson = await uploadRes.json();
         receiptUrl = uploadJson.url;
       } catch (err) {
@@ -54,7 +58,8 @@ export default function EntryModal({ closeModal, refreshData }) {
           url: formData.url,
           purchase_date: formData.purchase_date,
           notes: formData.notes,
-          receipt_file: receiptUrl // Save the real URL from the backend
+          tags: JSON.stringify(formData.tags),
+          receipt_file: receiptUrl 
         })
       });
       refreshData();
@@ -89,6 +94,31 @@ export default function EntryModal({ closeModal, refreshData }) {
             <input type="date" required value={formData.purchase_date} onChange={(e) => setFormData({...formData, purchase_date: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white outline-none focus:border-indigo-500" />
           </div>
 
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-2">Tags (Select all that apply)</label>
+            <div className="flex flex-wrap gap-2">
+              {availableTags.map(tag => {
+                const isSelected = formData.tags.includes(tag.name);
+                return (
+                  <button
+                    key={tag.name}
+                    type="button"
+                    onClick={() => toggleTag(tag.name)}
+                    // Increased padding (px-4 py-2) and font size (text-sm) here:
+                    className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 border hover:opacity-80 ${isSelected ? 'drop-shadow-md' : ''}`}
+                    style={isSelected 
+                      ? { backgroundColor: tag.color, borderColor: tag.color, color: '#ffffff' } 
+                      : { backgroundColor: 'transparent', borderColor: tag.color, color: tag.color }
+                    }
+                  >
+                    {tag.name}
+                  </button>
+                );
+              })}
+              {availableTags.length === 0 && <span className="text-sm text-slate-500 italic">No tags created yet.</span>}
+            </div>
+          </div>
+
           <label className="flex items-center gap-2 cursor-pointer bg-slate-900 p-3 rounded-lg border border-slate-700">
             <input type="checkbox" checked={formData.is_subscription} onChange={(e) => setFormData({...formData, is_subscription: e.target.checked})} className="w-4 h-4 accent-indigo-500" />
             <span className="text-sm font-medium text-slate-200">This is a recurring subscription</span>
@@ -115,8 +145,8 @@ export default function EntryModal({ closeModal, refreshData }) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-400 mb-1">Upload Receipt (Optional Image)</label>
-            <input type="file" accept="image/*" onChange={(e) => setFile(e.target.files[0])} className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-slate-700 file:text-white hover:file:bg-slate-600" />
+            <label className="block text-sm font-medium text-slate-400 mb-1">Upload Receipt (Optional Image/PDF)</label>
+            <input type="file" accept="image/*,.pdf" onChange={(e) => setFile(e.target.files[0])} className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-slate-700 file:text-white hover:file:bg-slate-600" />
           </div>
 
           <div>

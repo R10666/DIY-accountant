@@ -3,3 +3,5 @@ uvicorn
 sqlalchemy
 pydantic
 python-multipart
+requests 
+beautifulsoup4

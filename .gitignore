@@ -1,6 +1,7 @@
-# Node modules and build files
+# Node and Vite
 frontend/node_modules/
 frontend/dist/
+frontend/.vite/
 
 # Python environments and cache
 backend/venv/
@@ -10,5 +11,10 @@ backend/__pycache__/
 backend/finance.db
 backend/uploads/
 
+# Environment variables (for future-proofing)
+.env
+.env.local
+
 # OS files
 .DS_Store
+Thumbs.db
