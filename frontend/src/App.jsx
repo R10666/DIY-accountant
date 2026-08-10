@@ -5,18 +5,17 @@ import History from './components/History';
 import Subscriptions from './components/Subscriptions';
 import EntryModal from './components/EntryModal';
 import TransactionDetails from './components/TransactionDetails';
-import TagsManager from './components/TagsManager'; // Import the new component
+import TagsManager from './components/TagsManager';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [transactions, setTransactions] = useState([]);
-  const [tags, setTags] = useState([]); // NEW: State for tags
+  const [tags, setTags] = useState([]); 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTx, setSelectedTx] = useState(null);
 
   const fetchData = async () => {
     try {
-      // Fetch both transactions AND tags simultaneously
       const [txRes, tagsRes] = await Promise.all([
         fetch('http://127.0.0.1:8000/api/transactions'),
         fetch('http://127.0.0.1:8000/api/tags')
@@ -57,16 +56,21 @@ export default function App() {
       <Navigation activeTab={activeTab} setActiveTab={setActiveTab} />
 
       <main className="max-w-7xl mx-auto p-6">
-        <div className="mb-6 flex justify-end">
-          <button onClick={() => setIsModalOpen(true)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-lg">
-            + New Purchase
-          </button>
-        </div>
+        
+        {/* We only render the standalone button here if NOT on the dashboard to save vertical space */}
+        {activeTab !== 'dashboard' && (
+          <div className="mb-6 flex justify-end">
+            <button onClick={() => setIsModalOpen(true)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-lg">
+              + New Purchase
+            </button>
+          </div>
+        )}
 
-        {activeTab === 'dashboard' && <Dashboard currentBalance={currentBalance} refreshData={fetchData} />}
+        {/* Pass the onNewPurchase function directly to the Dashboard */}
+        {activeTab === 'dashboard' && <Dashboard currentBalance={currentBalance} transactions={transactions} tagsList={tags} refreshData={fetchData} onNewPurchase={() => setIsModalOpen(true)} />}
+        
         {activeTab === 'history' && <History transactions={transactions} tagsList={tags} onViewDetails={setSelectedTx} />}
         {activeTab === 'subscriptions' && <Subscriptions transactions={transactions} onViewDetails={setSelectedTx} />}
-        {/* Render the new Tags page */}
         {activeTab === 'tags' && <TagsManager tags={tags} refreshTags={fetchData} />}
       </main>
 
