@@ -5,15 +5,28 @@ frontend/.vite/
 
 # Python environments and cache
 backend/venv/
-backend/__pycache__/
+**/__pycache__/
+*.pyc
 
 # Personal Data and Uploads (CRITICAL)
 backend/finance.db
-backend/uploads/
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Logs
+*.log
 
 # Environment variables (for future-proofing)
 .env
 .env.local
+.env.*.local
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
 # OS files
 .DS_Store

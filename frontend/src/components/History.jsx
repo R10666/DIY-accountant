@@ -6,7 +6,6 @@ export default function History({ transactions, tagsList, onViewDetails }) {
   const [sortBy, setSortBy] = useState('date-desc');
   const [selectedFilterTags, setSelectedFilterTags] = useState([]);
   
-  const [showAllTypes, setShowAllTypes] = useState(true);
   const [typeFilters, setTypeFilters] = useState({
     purchase: true,
     deposit: true,
@@ -17,6 +16,11 @@ export default function History({ transactions, tagsList, onViewDetails }) {
   const [highlightedId, setHighlightedId] = useState(null);
   const rowRefs = useRef({}); 
 
+  // FIX: now that the backend gives every subscription payment a real
+  // subscription_id, group by that directly instead of `${title}|${cycle}`.
+  // The old key worked in practice since billing_cycle no longer doubles
+  // as a status flag, but subscription_id is the actual foreign key and
+  // can never collide, even if two subscriptions happen to share a name.
   const subIterations = useMemo(() => {
     const counts = {};
     const iters = {};
@@ -24,7 +28,7 @@ export default function History({ transactions, tagsList, onViewDetails }) {
     const sorted = [...transactions].sort((a, b) => new Date(a.purchase_date) - new Date(b.purchase_date));
     
     sorted.filter(t => t.is_subscription).forEach(t => {
-      const key = `${t.title}|${t.billing_cycle}`;
+      const key = t.subscription_id ?? `${t.title}|${t.billing_cycle}`; // fallback for safety
       counts[key] = (counts[key] || 0) + 1;
       iters[t.id] = counts[key];
     });
@@ -34,10 +38,15 @@ export default function History({ transactions, tagsList, onViewDetails }) {
 
   // Category badge for the fixed-width center column: Subscription,
   // Deposit, Refund, Purchase all live here so they line up vertically
-  // across every row. Subscription takes priority over the underlying
-  // type (a subscription row is also technically "purchase").
+  // across every row. A recurring DEPOSIT shows as "Deposit" rather than
+  // "Subscription" — it's still income, just recurring income, and
+  // "Subscription" reads as an expense to most people. Recurring
+  // purchases (Netflix etc.) still show "Subscription" as before. Either
+  // way, the "Payment #x" indicator further down (tied to is_subscription
+  // alone, not type) still signals that a row is part of a recurring
+  // series — the badge just no longer has to carry that meaning too.
   const getCategory = (t) => {
-    if (t.is_subscription) return { label: 'Subscription', className: 'bg-purple-900/70 text-purple-300' };
+    if (t.is_subscription && t.type !== 'deposit') return { label: 'Subscription', className: 'bg-purple-900/70 text-purple-300' };
     if (t.type === 'deposit') return { label: 'Deposit', className: 'bg-sky-900/80 text-sky-300' };
     if (t.type === 'refund') return { label: 'Refund', className: 'bg-indigo-900/80 text-indigo-300' };
     if (t.type === 'purchase') return { label: 'Purchase', className: 'bg-pink-900/70 text-pink-300' };
@@ -52,18 +61,24 @@ export default function History({ transactions, tagsList, onViewDetails }) {
     );
   };
 
+  // FIX: showAllTypes used to be its own piece of state, kept in sync via
+  // a setState call INSIDE setTypeFilters's updater function. That updater
+  // is supposed to be pure — React can invoke it more than once per update
+  // (Strict Mode does this deliberately in development, and concurrent
+  // rendering can too, if a render is started and later discarded). Every
+  // extra invocation re-fired the setShowAllTypes side effect, even for
+  // renders that never committed, letting the two pieces of state drift
+  // apart after enough clicks. Deriving showAllTypes directly from
+  // typeFilters on every render removes the second source of truth
+  // entirely, so there's nothing left to desync.
+  const showAllTypes = Object.values(typeFilters).every(Boolean);
+
   const handleTypeToggle = (typeKey) => {
-    setTypeFilters(prev => {
-      const next = { ...prev, [typeKey]: !prev[typeKey] };
-      const allChecked = Object.values(next).every(Boolean);
-      setShowAllTypes(allChecked);
-      return next;
-    });
+    setTypeFilters(prev => ({ ...prev, [typeKey]: !prev[typeKey] }));
   };
 
   const handleShowAllToggle = () => {
     const nextState = !showAllTypes;
-    setShowAllTypes(nextState);
     setTypeFilters({
       purchase: nextState,
       deposit: nextState,
@@ -75,11 +90,17 @@ export default function History({ transactions, tagsList, onViewDetails }) {
   let processedPurchases = transactions.filter(t => {
     if (t.type === 'adjustment') return false;
     if (searchTerm && !t.title.toLowerCase().includes(searchTerm.toLowerCase())) return false;
-    
-    if (t.is_subscription && !typeFilters.subscription) return false;
-    if (!t.is_subscription && t.type === 'refund' && !typeFilters.refund) return false;
-    if (!t.is_subscription && t.type === 'deposit' && !typeFilters.deposit) return false;
+
+    // These mirror getCategory()'s exact priority below, so a row's
+    // checkbox and its badge always agree: a recurring DEPOSIT is
+    // governed by the Deposits checkbox (like its badge says "Deposit"),
+    // not Subscriptions. Subscriptions only governs recurring rows that
+    // AREN'T deposits (i.e. recurring purchases/expenses). Purchase and
+    // Refund stay scoped to one-off rows, same as before.
+    if (t.type === 'deposit' && !typeFilters.deposit) return false;
+    if (t.is_subscription && t.type !== 'deposit' && !typeFilters.subscription) return false;
     if (!t.is_subscription && t.type === 'purchase' && !typeFilters.purchase) return false;
+    if (!t.is_subscription && t.type === 'refund' && !typeFilters.refund) return false;
 
     let txTags = [];
     try { txTags = JSON.parse(t.tags || '[]'); } catch { }
@@ -101,14 +122,27 @@ export default function History({ transactions, tagsList, onViewDetails }) {
     return 0;
   });
 
+  // FIX: transactions.id and subscription_payments.id are two SEPARATE
+  // AUTOINCREMENT sequences, each starting at 1 — so a one-off transaction
+  // and a subscription payment can (and very often do) share the same raw
+  // `id` once they're merged into one combined list by the backend. Using
+  // t.id directly as a React key produces duplicate keys, which React
+  // explicitly documents as producing "unsupported" behavior — including
+  // stale rows surviving a re-render even when the underlying data (and
+  // this list's own length) says they shouldn't still be there. rowKey()
+  // namespaces by row type so it's unique across the whole combined list,
+  // while t.id itself is left untouched everywhere it's used to build API
+  // calls, since that still needs to be the real underlying row id.
+  const rowKey = (t) => `${t.is_subscription ? 'sub' : 'tx'}-${t.id}`;
+
   const scrollToRefund = (originalTitle) => {
     const targetTitle = `Refund: ${originalTitle}`;
     const refundTx = processedPurchases.find(tx => tx.type === 'refund' && tx.title === targetTitle);
     
-    if (refundTx && rowRefs.current[refundTx.id]) {
-      rowRefs.current[refundTx.id].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (refundTx && rowRefs.current[rowKey(refundTx)]) {
+      rowRefs.current[rowKey(refundTx)].scrollIntoView({ behavior: 'smooth', block: 'center' });
       
-      setHighlightedId(refundTx.id);
+      setHighlightedId(rowKey(refundTx));
       setTimeout(() => {
         setHighlightedId(null);
       }, 2000);
@@ -225,7 +259,7 @@ export default function History({ transactions, tagsList, onViewDetails }) {
           processedPurchases.map(t => {
             const isFullyRefunded = t.type === 'purchase' && (t.refunded_amount || 0) >= t.amount;
             const isIncome = t.type === 'deposit' || t.type === 'refund';
-            const isHighlighted = highlightedId === t.id;
+            const isHighlighted = highlightedId === rowKey(t);
             const category = getCategory(t);
             
             let txTags = [];
@@ -237,8 +271,8 @@ export default function History({ transactions, tagsList, onViewDetails }) {
 
             return (
               <div 
-                key={t.id} 
-                ref={(el) => (rowRefs.current[t.id] = el)} 
+                key={rowKey(t)} 
+                ref={(el) => (rowRefs.current[rowKey(t)] = el)} 
                 className={`flex justify-between items-center py-4 px-6 border-b border-slate-700/50 last:border-b-0 transition-all duration-500 ${isHighlighted ? 'bg-indigo-900/40 border-l-4 border-l-indigo-400' : 'hover:bg-slate-700/30 border-l-4 border-l-transparent'}`}
               >
                 {/* Left: title, refund status, tags/date. */}

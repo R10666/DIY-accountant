@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Plus, Trash2, Tag as TagIcon } from 'lucide-react';
+import { createTag, deleteTag } from '../api';
 
 export default function TagsManager({ tags, refreshTags }) {
   const [newTagName, setNewTagName] = useState('');
@@ -9,23 +10,26 @@ export default function TagsManager({ tags, refreshTags }) {
     e.preventDefault();
     if (!newTagName.trim()) return;
 
-    await fetch('http://127.0.0.1:8000/api/tags', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newTagName.trim(), color: newTagColor })
-    });
-    
-    setNewTagName('');
-    refreshTags();
+    try {
+      await createTag({ name: newTagName.trim(), color: newTagColor });
+      setNewTagName('');
+      refreshTags();
+    } catch (error) {
+      console.error("Failed to add tag:", error);
+      alert(`Couldn't save this tag: ${error.message}`);
+    }
   };
 
   const handleDeleteTag = async (name) => {
-    if (!confirm(`Delete the tag "${name}"? Transactions using this tag will keep the name but lose the color.`)) return;
-    
-    await fetch(`http://127.0.0.1:8000/api/tags/${encodeURIComponent(name)}`, {
-      method: 'DELETE'
-    });
-    refreshTags();
+    if (!confirm(`Delete the tag "${name}"? It'll be removed from every transaction and subscription that has it — not just uncolored, fully gone.`)) return;
+
+    try {
+      await deleteTag(name);
+      refreshTags();
+    } catch (error) {
+      console.error("Failed to delete tag:", error);
+      alert(`Couldn't delete "${name}": ${error.message}`);
+    }
   };
 
   return (

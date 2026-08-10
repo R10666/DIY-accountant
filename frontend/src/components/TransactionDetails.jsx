@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Edit2, Check, RefreshCcw, ExternalLink, UploadCloud, Trash2, X, Maximize2 } from 'lucide-react';
+import { getLinkPreview, updateTransaction, updateSubscription, updateSubscriptionPayment, createTransaction, uploadFile } from '../api';
 
-// NEW: Accept transactions prop to generate the history table
+// Accepts `transactions` prop to generate the subscription payment history table
 export default function TransactionDetails({ t, tagsList, onBack, refreshData, transactions }) {
   const [isEditing, setIsEditing] = useState(false);
-  
+
   const parseTags = () => {
     try { return JSON.parse(t.tags || '[]'); }
     catch { return []; }
@@ -15,7 +16,7 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData, t
     url: t.url || '',
     tags: parseTags()
   });
-  
+
   const [preview, setPreview] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [showFullscreen, setShowFullscreen] = useState(false);
@@ -24,17 +25,25 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData, t
   const isFullyRefunded = refunded >= t.amount;
   const isIncome = t.type === 'deposit' || t.type === 'refund' || t.type === 'adjustment';
 
-  // NEW: Find all historical payments for this subscription
   const isSub = t.is_subscription;
-  const subHistory = isSub && transactions 
-    ? transactions.filter(tx => tx.is_subscription && tx.title === t.title)
+  // A subscription row's own definition lives in the subscriptions table
+  // (t.subscription_id), separate from any individual payment (t.id here
+  // is a subscription_payments id, not a transactions id). Editing notes/
+  // url/tags/receipt applies to the DEFINITION — shared across every
+  // payment — while refunding applies to one specific payment.
+  const isCancelled = isSub && t.subscription_status === 'cancelled';
+
+  // Payment history is now matched by subscription_id, not title, so two
+  // differently-tracked subscriptions that happen to share a name can
+  // never bleed into each other's history.
+  const subHistory = isSub && transactions
+    ? transactions.filter(tx => tx.is_subscription && tx.subscription_id === t.subscription_id)
         .sort((a, b) => new Date(b.purchase_date) - new Date(a.purchase_date)) // Newest first
     : [];
 
   useEffect(() => {
     if (t.url && !isEditing) {
-      fetch(`http://127.0.0.1:8000/api/preview?url=${encodeURIComponent(t.url)}`)
-        .then(res => res.json())
+      getLinkPreview(t.url)
         .then(data => setPreview(data))
         .catch(() => setPreview(null));
     }
@@ -49,23 +58,35 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData, t
 
   const handleSave = async () => {
     const finalTags = t.type === 'deposit' ? [] : formData.tags;
-    await fetch(`http://127.0.0.1:8000/api/transaction/${t.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ notes: formData.notes, url: formData.url, tags: JSON.stringify(finalTags) })
-    });
-    setIsEditing(false);
-    refreshData();
-    t.notes = formData.notes;
-    t.url = formData.url;
-    t.tags = JSON.stringify(finalTags);
+    try {
+      const payload = { notes: formData.notes, url: formData.url, tags: JSON.stringify(finalTags) };
+      if (isSub) {
+        await updateSubscription(t.subscription_id, payload);
+      } else {
+        await updateTransaction(t.id, payload);
+      }
+
+      setIsEditing(false);
+      refreshData();
+      t.notes = formData.notes;
+      t.url = formData.url;
+      t.tags = JSON.stringify(finalTags);
+    } catch (error) {
+      console.error("Failed to save changes:", error);
+      alert(`Couldn't save your changes: ${error.message}`);
+    }
   };
 
   const handleRefund = async () => {
+    if (isSub && !t.id) {
+      alert("This subscription hasn't had its first payment yet, so there's nothing to refund.");
+      return;
+    }
+
     const maxRefund = t.amount - refunded;
     const input = prompt(`Enter amount to refund (Max: $${maxRefund.toFixed(2)}).`, maxRefund);
-    if (input === null) return; 
-    
+    if (input === null) return;
+
     const amountToRefund = parseFloat(input);
     if (isNaN(amountToRefund) || amountToRefund <= 0 || amountToRefund > maxRefund) {
       alert("Invalid refund amount entered.");
@@ -77,47 +98,52 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData, t
     if (!dateInput) return;
 
     const newTotalRefund = refunded + amountToRefund;
-    await fetch(`http://127.0.0.1:8000/api/transaction/${t.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refunded_amount: newTotalRefund })
-    });
 
-    await fetch('http://127.0.0.1:8000/api/transaction', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    try {
+      // Refunding a subscription payment updates that ONE payment row;
+      // refunding a one-off updates the transaction row directly. Either
+      // way, the refund itself is always logged as a normal one-off
+      // 'refund' transaction so it shows up in the ledger and History.
+      if (isSub) {
+        await updateSubscriptionPayment(t.id, { refunded_amount: newTotalRefund });
+      } else {
+        await updateTransaction(t.id, { refunded_amount: newTotalRefund });
+      }
+
+      await createTransaction({
         title: `Refund: ${t.title}`,
         amount: amountToRefund,
         type: 'refund',
         purchase_date: dateInput,
-        is_subscription: false,
-        tags: t.tags 
-      })
-    });
+        tags: t.tags
+      });
 
-    refreshData();
-    t.refunded_amount = newTotalRefund;
+      refreshData();
+      t.refunded_amount = newTotalRefund;
+    } catch (error) {
+      console.error("Failed to process refund:", error);
+      alert(`Something went wrong processing this refund: ${error.message}\n\nPlease check the transaction history before retrying, to avoid a duplicate refund.`);
+    }
   };
 
   const handleInlineUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     setIsUploading(true);
-    const uploadData = new FormData();
-    uploadData.append("file", file);
     try {
-      const uploadRes = await fetch('http://127.0.0.1:8000/api/upload', { method: 'POST', body: uploadData });
-      const uploadJson = await uploadRes.json();
-      await fetch(`http://127.0.0.1:8000/api/transaction/${t.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ receipt_file: uploadJson.url })
-      });
+      const uploadJson = await uploadFile(file);
+      const payload = { receipt_file: uploadJson.url };
+      if (isSub) {
+        await updateSubscription(t.subscription_id, payload);
+      } else {
+        await updateTransaction(t.id, payload);
+      }
+
       refreshData();
       t.receipt_file = uploadJson.url;
     } catch (err) {
-      console.error("Failed to upload file");
+      console.error("Failed to upload file:", err);
+      alert(`Couldn't attach that receipt: ${err.message}`);
     } finally {
       setIsUploading(false);
     }
@@ -125,13 +151,20 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData, t
 
   const handleDeleteReceipt = async () => {
     if (!confirm("Are you sure you want to remove this receipt?")) return;
-    await fetch(`http://127.0.0.1:8000/api/transaction/${t.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ receipt_file: "" })
-    });
-    refreshData();
-    t.receipt_file = ""; 
+    try {
+      const payload = { receipt_file: "" };
+      if (isSub) {
+        await updateSubscription(t.subscription_id, payload);
+      } else {
+        await updateTransaction(t.id, payload);
+      }
+
+      refreshData();
+      t.receipt_file = "";
+    } catch (error) {
+      console.error("Failed to delete receipt:", error);
+      alert(`Couldn't remove the receipt: ${error.message}`);
+    }
   };
 
   const isPdf = t.receipt_file?.toLowerCase().endsWith('.pdf');
@@ -171,16 +204,16 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData, t
             <div className="bg-slate-900/50 p-4 rounded-lg border border-slate-700/50 space-y-3 text-slate-300">
               <p className="flex justify-between"><span className="text-slate-500">Date</span> <span>{t.purchase_date}</span></p>
               <p className="flex justify-between"><span className="text-slate-500">Type</span> <span className="capitalize">{t.type}</span></p>
-              {t.is_subscription && t.billing_cycle !== 'cancelled' ? (
+              {isSub ? (
                 <p className="flex justify-between"><span className="text-slate-500">Billing Cycle</span> <span className="capitalize">{t.billing_cycle}</span></p>
               ) : null}
-              {t.is_subscription && t.billing_cycle === 'cancelled' ? (
+              {isCancelled ? (
                 <p className="flex justify-between"><span className="text-slate-500">Status</span> <span className="text-slate-500 font-bold uppercase">Inactive</span></p>
               ) : null}
-              
+
               {t.type !== 'deposit' && (
                 <div className="flex justify-between items-start pt-2 border-t border-slate-700/50">
-                  <span className="text-slate-500">Tags</span> 
+                  <span className="text-slate-500">Tags</span>
                   <div className="flex flex-wrap gap-2 justify-end max-w-[200px]">
                     {currentTags.length === 0 ? <span className="text-sm italic">No tags</span> : currentTags.map(tagName => {
                       const tagObj = tagsList.find(tg => tg.name === tagName);
@@ -197,7 +230,7 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData, t
 
             <div className="space-y-4">
               <h3 className="text-lg font-semibold text-white border-b border-slate-700 pb-2">Notes & Links</h3>
-              
+
               {isEditing ? (
                 <div className="space-y-4 bg-slate-900/50 p-4 rounded-lg border border-slate-700">
                   {t.type !== 'deposit' && (
@@ -229,6 +262,11 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData, t
                     <label className="text-xs text-slate-400">Notes</label>
                     <textarea value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})} className="w-full bg-slate-800 border border-slate-600 rounded p-2.5 text-sm mt-1 h-24 outline-none focus:border-indigo-500" />
                   </div>
+                  {isSub && (
+                    <p className="text-xs text-slate-500 italic">
+                      Notes, links, and tags apply to the whole subscription — every past and future payment shares them.
+                    </p>
+                  )}
                   <button onClick={handleSave} className="w-full flex justify-center items-center gap-2 bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 rounded-lg text-sm text-white font-medium transition-colors">
                     <Check size={16}/> Save Changes
                   </button>
@@ -252,7 +290,7 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData, t
                   ) : (
                     <p className="text-slate-500 text-sm italic">No link provided.</p>
                   )}
-                  
+
                   <div className="bg-slate-900/50 p-4 rounded-lg border border-slate-700/50 min-h-[100px]">
                     {t.notes ? <p className="text-slate-300 whitespace-pre-wrap">{t.notes}</p> : <p className="text-slate-500 text-sm italic">No notes added.</p>}
                   </div>
@@ -295,29 +333,30 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData, t
           </div>
         </div>
 
-        {/* NEW: Full Width Subscription Payment History Table */}
+        {/* Full Width Subscription Payment History Table */}
         {isSub && (
           <div className="px-8 pb-8">
             <h3 className="text-lg font-semibold text-white border-b border-slate-700 pb-2 mb-4">Complete Payment History</h3>
-            
+
             <div className="bg-slate-900/50 rounded-xl border border-slate-700 overflow-hidden max-h-72 overflow-y-auto">
-              {subHistory.map((tx, idx) => {
+              {subHistory.length === 0 ? (
+                <p className="text-slate-500 text-sm italic p-6">No payments recorded yet for this subscription.</p>
+              ) : subHistory.map((tx, idx) => {
                 const chronologicalIteration = subHistory.length - idx; // because array is sorted newest first
-                const isCancelled = tx.billing_cycle === 'cancelled';
-                
+
                 return (
                   <div key={tx.id} className="flex justify-between items-center py-3 px-6 border-b border-slate-700/50 last:border-b-0 hover:bg-slate-800/50 transition-colors">
                     <div className="flex items-center gap-4">
                       <span className="text-slate-400 text-sm font-medium w-12">#{chronologicalIteration}</span>
                       <span className="text-slate-200 font-medium">{tx.purchase_date}</span>
-                      
-                      {isCancelled && (
-                        <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded tracking-wider bg-slate-700 text-slate-400 ml-2">
-                          Inactive Record
+
+                      {tx.refunded_amount > 0 && (
+                        <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded tracking-wider bg-emerald-900/60 text-emerald-400 ml-2">
+                          Refunded ${tx.refunded_amount.toFixed(2)}
                         </span>
                       )}
                     </div>
-                    
+
                     <span className={`font-bold ${isIncome ? 'text-emerald-400' : 'text-rose-400'}`}>
                       {isIncome ? '+' : '-'}${tx.amount.toFixed(2)}
                     </span>
@@ -325,16 +364,22 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData, t
                 );
               })}
             </div>
+
+            {isCancelled && (
+              <p className="text-xs text-slate-500 italic mt-3">
+                This subscription is currently inactive — no new payments will be generated until it's restarted.
+              </p>
+            )}
           </div>
         )}
       </div>
 
       {showFullscreen && t.receipt_file && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/90 flex items-center justify-center z-[100] p-4 cursor-zoom-out"
-          onClick={() => setShowFullscreen(false)} 
+          onClick={() => setShowFullscreen(false)}
         >
-          <button 
+          <button
             className="absolute top-6 right-6 text-slate-400 hover:text-white bg-slate-900/50 p-2 rounded-full transition-colors z-50"
             onClick={() => setShowFullscreen(false)}
           >

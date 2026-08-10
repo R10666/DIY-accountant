@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import SpendingChart from './SpendingChart';
 import FundChart from './FundChart';
 import { Calendar } from 'lucide-react';
+import { createTransaction } from '../api';
 
 export default function Dashboard({ currentBalance, transactions = [], tagsList = [], refreshData, onNewPurchase }) {
   const [isAdjusting, setIsAdjusting] = useState(false);
@@ -52,22 +53,18 @@ export default function Dashboard({ currentBalance, transactions = [], tagsList 
     const delta = targetAmount - currentBalance;
 
     try {
-      await fetch('http://127.0.0.1:8000/api/transaction', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: 'Manual Fund Adjustment',
-          amount: delta,
-          type: 'adjustment',
-          purchase_date: new Date().toISOString().split('T')[0],
-          is_subscription: false
-        })
+      await createTransaction({
+        title: 'Manual Fund Adjustment',
+        amount: delta,
+        type: 'adjustment',
+        purchase_date: new Date().toISOString().split('T')[0],
       });
       setIsAdjusting(false);
       setAdjustAmount('');
       refreshData();
     } catch (error) {
       console.error("Failed to adjust funds:", error);
+      alert(`Couldn't apply that adjustment: ${error.message}`);
     }
   };
 

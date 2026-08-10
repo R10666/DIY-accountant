@@ -51,15 +51,24 @@ export default function FundChart({ transactions, timeRange }) {
 
     let activeBal = 0;
 
-    // Deduplicate subscriptions. Collapse to ONE anchor per distinct subscription 
+    // Deduplicate subscriptions. Collapse to ONE anchor per distinct subscription
     const latestSubByKey = {};
     transactions.filter(t => t.is_subscription).forEach(t => {
-      const key = `${t.title}|${t.billing_cycle}`;
+      const key = t.subscription_id ?? `${t.title}|${t.billing_cycle}`;
       if (!latestSubByKey[key] || new Date(t.purchase_date) > new Date(latestSubByKey[key].purchase_date)) {
         latestSubByKey[key] = t;
       }
     });
-    const subs = Object.values(latestSubByKey);
+
+    // FIX: this used to project every subscription forward forever,
+    // regardless of whether it had been stopped — it only ever looked at
+    // title/billing_cycle/amount, never subscription_status. Every
+    // subscription-payment row already carries the CURRENT status of its
+    // subscription (joined server-side), so a cancelled one is filtered
+    // out here before the forward-projection loop runs. Its real past
+    // payments are untouched — they're already baked into `grouped`
+    // above — only future projection stops.
+    const subs = Object.values(latestSubByKey).filter(sub => sub.subscription_status !== 'cancelled');
 
     // Generate a point for EVERY SINGLE DAY so lines are precise and flat when no changes occur
     while (curr <= maxDate) {

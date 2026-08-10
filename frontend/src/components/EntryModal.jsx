@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
+import { uploadFile, createSubscription, createTransaction } from '../api';
 
 export default function EntryModal({ availableTags, closeModal, refreshData }) {
-  const [entryType, setEntryType] = useState('purchase'); 
+  const [entryType, setEntryType] = useState('purchase');
   const [file, setFile] = useState(null);
-  
+
   const [formData, setFormData] = useState({
     title: '',
     amount: '',
@@ -20,8 +21,8 @@ export default function EntryModal({ availableTags, closeModal, refreshData }) {
   const toggleTag = (tagName) => {
     setFormData(prev => ({
       ...prev,
-      tags: prev.tags.includes(tagName) 
-        ? prev.tags.filter(t => t !== tagName) 
+      tags: prev.tags.includes(tagName)
+        ? prev.tags.filter(t => t !== tagName)
         : [...prev.tags, tagName]
     }));
   };
@@ -35,14 +36,12 @@ export default function EntryModal({ availableTags, closeModal, refreshData }) {
 
     let receiptUrl = null;
     if (file) {
-      const uploadData = new FormData();
-      uploadData.append("file", file);
       try {
-        const uploadRes = await fetch('http://127.0.0.1:8000/api/upload', { method: 'POST', body: uploadData });
-        const uploadJson = await uploadRes.json();
+        const uploadJson = await uploadFile(file);
         receiptUrl = uploadJson.url;
       } catch (err) {
         console.error("Failed to upload file:", err);
+        alert(`Couldn't upload the receipt: ${err.message}. The entry will be saved without it — you can attach it later from the details page.`);
       }
     }
 
@@ -50,26 +49,41 @@ export default function EntryModal({ availableTags, closeModal, refreshData }) {
     const finalTags = entryType === 'deposit' ? [] : formData.tags;
 
     try {
-      await fetch('http://127.0.0.1:8000/api/transaction', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      // Subscriptions and one-off transactions live in separate
+      // tables/endpoints now. Recurring entries go through
+      // createSubscription (which also immediately materializes any
+      // already-due payment server-side); everything else goes through
+      // createTransaction.
+      if (formData.is_subscription) {
+        await createSubscription({
           title: formData.title,
           amount: parseFloat(formData.amount),
-          type: entryType, 
-          is_subscription: formData.is_subscription,
+          type: entryType,
           billing_cycle: finalBillingCycle,
+          start_date: formData.purchase_date,
+          url: formData.url,
+          notes: formData.notes,
+          tags: JSON.stringify(finalTags),
+          receipt_file: receiptUrl
+        });
+      } else {
+        await createTransaction({
+          title: formData.title,
+          amount: parseFloat(formData.amount),
+          type: entryType,
           url: formData.url,
           purchase_date: formData.purchase_date,
           notes: formData.notes,
           tags: JSON.stringify(finalTags),
-          receipt_file: receiptUrl 
-        })
-      });
+          receipt_file: receiptUrl
+        });
+      }
+
       refreshData();
       closeModal();
     } catch (error) {
       console.error("Failed to save transaction:", error);
+      alert(`Couldn't save this entry: ${error.message}`);
     }
   };
 
@@ -99,7 +113,7 @@ export default function EntryModal({ availableTags, closeModal, refreshData }) {
             Income (Deposit)
           </button>
         </div>
-        
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="flex gap-4">
             <div className="flex-1">
@@ -113,7 +127,9 @@ export default function EntryModal({ availableTags, closeModal, refreshData }) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-400 mb-1">Date *</label>
+            <label className="block text-sm font-medium text-slate-400 mb-1">
+              {formData.is_subscription ? 'First Payment Date *' : 'Date *'}
+            </label>
             <input type="date" required value={formData.purchase_date} onChange={(e) => setFormData({...formData, purchase_date: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white outline-none focus:border-indigo-500" />
           </div>
 
@@ -130,8 +146,8 @@ export default function EntryModal({ availableTags, closeModal, refreshData }) {
                       type="button"
                       onClick={() => toggleTag(tag.name)}
                       className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 border hover:opacity-80 ${isSelected ? 'drop-shadow-md' : ''}`}
-                      style={isSelected 
-                        ? { backgroundColor: tag.color, borderColor: tag.color, color: '#ffffff' } 
+                      style={isSelected
+                        ? { backgroundColor: tag.color, borderColor: tag.color, color: '#ffffff' }
                         : { backgroundColor: 'transparent', borderColor: tag.color, color: tag.color }
                       }
                     >
