@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Edit2, Check, RefreshCcw, ExternalLink, UploadCloud, Trash2, X, Maximize2 } from 'lucide-react';
 
-export default function TransactionDetails({ t, tagsList, onBack, refreshData }) {
+// NEW: Accept transactions prop to generate the history table
+export default function TransactionDetails({ t, tagsList, onBack, refreshData, transactions }) {
   const [isEditing, setIsEditing] = useState(false);
   
   const parseTags = () => {
@@ -21,6 +22,14 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData })
 
   const refunded = t.refunded_amount || 0;
   const isFullyRefunded = refunded >= t.amount;
+  const isIncome = t.type === 'deposit' || t.type === 'refund' || t.type === 'adjustment';
+
+  // NEW: Find all historical payments for this subscription
+  const isSub = t.is_subscription;
+  const subHistory = isSub && transactions 
+    ? transactions.filter(tx => tx.is_subscription && tx.title === t.title)
+        .sort((a, b) => new Date(b.purchase_date) - new Date(a.purchase_date)) // Newest first
+    : [];
 
   useEffect(() => {
     if (t.url && !isEditing) {
@@ -34,27 +43,22 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData })
   const toggleTag = (tagName) => {
     setFormData(prev => ({
       ...prev,
-      tags: prev.tags.includes(tagName) 
-        ? prev.tags.filter(tg => tg !== tagName) 
-        : [...prev.tags, tagName]
+      tags: prev.tags.includes(tagName) ? prev.tags.filter(tg => tg !== tagName) : [...prev.tags, tagName]
     }));
   };
 
   const handleSave = async () => {
+    const finalTags = t.type === 'deposit' ? [] : formData.tags;
     await fetch(`http://127.0.0.1:8000/api/transaction/${t.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        notes: formData.notes,
-        url: formData.url,
-        tags: JSON.stringify(formData.tags)
-      })
+      body: JSON.stringify({ notes: formData.notes, url: formData.url, tags: JSON.stringify(finalTags) })
     });
     setIsEditing(false);
     refreshData();
     t.notes = formData.notes;
     t.url = formData.url;
-    t.tags = JSON.stringify(formData.tags);
+    t.tags = JSON.stringify(finalTags);
   };
 
   const handleRefund = async () => {
@@ -67,12 +71,31 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData })
       alert("Invalid refund amount entered.");
       return;
     }
+
+    const today = new Date().toISOString().split('T')[0];
+    const dateInput = prompt(`Enter date of refund (YYYY-MM-DD):`, today);
+    if (!dateInput) return;
+
     const newTotalRefund = refunded + amountToRefund;
     await fetch(`http://127.0.0.1:8000/api/transaction/${t.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refunded_amount: newTotalRefund })
     });
+
+    await fetch('http://127.0.0.1:8000/api/transaction', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: `Refund: ${t.title}`,
+        amount: amountToRefund,
+        type: 'refund',
+        purchase_date: dateInput,
+        is_subscription: false,
+        tags: t.tags 
+      })
+    });
+
     refreshData();
     t.refunded_amount = newTotalRefund;
   };
@@ -86,14 +109,13 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData })
     try {
       const uploadRes = await fetch('http://127.0.0.1:8000/api/upload', { method: 'POST', body: uploadData });
       const uploadJson = await uploadRes.json();
-      const receiptUrl = uploadJson.url;
       await fetch(`http://127.0.0.1:8000/api/transaction/${t.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ receipt_file: receiptUrl })
+        body: JSON.stringify({ receipt_file: uploadJson.url })
       });
       refreshData();
-      t.receipt_file = receiptUrl;
+      t.receipt_file = uploadJson.url;
     } catch (err) {
       console.error("Failed to upload file");
     } finally {
@@ -103,17 +125,13 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData })
 
   const handleDeleteReceipt = async () => {
     if (!confirm("Are you sure you want to remove this receipt?")) return;
-    try {
-      await fetch(`http://127.0.0.1:8000/api/transaction/${t.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ receipt_file: "" })
-      });
-      refreshData();
-      t.receipt_file = ""; 
-    } catch (err) {
-      console.error("Failed to delete receipt", err);
-    }
+    await fetch(`http://127.0.0.1:8000/api/transaction/${t.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ receipt_file: "" })
+    });
+    refreshData();
+    t.receipt_file = ""; 
   };
 
   const isPdf = t.receipt_file?.toLowerCase().endsWith('.pdf');
@@ -130,7 +148,7 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData })
             <button onClick={() => setIsEditing(!isEditing)} className="flex items-center gap-2 text-slate-300 hover:text-white bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg transition-colors">
               <Edit2 size={16} /> {isEditing ? 'Cancel Edit' : 'Edit Details'}
             </button>
-            {!isFullyRefunded && (
+            {!isFullyRefunded && !isIncome && (
               <button onClick={handleRefund} className="flex items-center gap-2 text-emerald-400 hover:text-emerald-300 bg-emerald-900/30 hover:bg-emerald-900/50 px-4 py-2 rounded-lg transition-colors">
                 <RefreshCcw size={16} /> Process Refund
               </button>
@@ -141,31 +159,40 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData })
         <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
           <div className="space-y-6">
             <div>
-              <h1 className={`text-3xl font-bold ${isFullyRefunded ? 'line-through text-slate-500' : 'text-white'}`}>{t.title}</h1>
+              <h1 className={`text-3xl font-bold ${isFullyRefunded && t.type === 'purchase' ? 'line-through text-slate-500' : 'text-white'}`}>{t.title}</h1>
               <div className="flex items-center gap-3 mt-2">
-                <span className={`text-2xl font-semibold ${isFullyRefunded ? 'text-slate-500' : 'text-emerald-400'}`}>${t.amount.toFixed(2)}</span>
-                {refunded > 0 && <span className="text-sm bg-emerald-900 text-emerald-400 px-3 py-1 rounded-full">Refunded: ${refunded.toFixed(2)}</span>}
+                <span className={`text-2xl font-semibold ${isFullyRefunded && t.type === 'purchase' ? 'text-slate-500' : (isIncome ? 'text-emerald-400' : 'text-slate-200')}`}>
+                  {isIncome ? '+' : ''}${t.amount.toFixed(2)}
+                </span>
+                {refunded > 0 && t.type === 'purchase' && <span className="text-sm bg-emerald-900 text-emerald-400 px-3 py-1 rounded-full">Refunded: ${refunded.toFixed(2)}</span>}
               </div>
             </div>
 
             <div className="bg-slate-900/50 p-4 rounded-lg border border-slate-700/50 space-y-3 text-slate-300">
               <p className="flex justify-between"><span className="text-slate-500">Date</span> <span>{t.purchase_date}</span></p>
               <p className="flex justify-between"><span className="text-slate-500">Type</span> <span className="capitalize">{t.type}</span></p>
-              {t.is_subscription ? <p className="flex justify-between"><span className="text-slate-500">Billing Cycle</span> <span className="capitalize">{t.billing_cycle}</span></p> : null}
+              {t.is_subscription && t.billing_cycle !== 'cancelled' ? (
+                <p className="flex justify-between"><span className="text-slate-500">Billing Cycle</span> <span className="capitalize">{t.billing_cycle}</span></p>
+              ) : null}
+              {t.is_subscription && t.billing_cycle === 'cancelled' ? (
+                <p className="flex justify-between"><span className="text-slate-500">Status</span> <span className="text-slate-500 font-bold uppercase">Inactive</span></p>
+              ) : null}
               
-              <div className="flex justify-between items-start pt-2 border-t border-slate-700/50">
-                <span className="text-slate-500">Tags</span> 
-                <div className="flex flex-wrap gap-2 justify-end max-w-[200px]">
-                  {currentTags.length === 0 ? <span className="text-sm italic">No tags</span> : currentTags.map(tagName => {
-                    const tagObj = tagsList.find(tg => tg.name === tagName);
-                    return (
-                      <span key={tagName} className="px-2 py-0.5 rounded text-xs text-white drop-shadow-md" style={{ backgroundColor: tagObj ? tagObj.color : '#64748b' }}>
-                        {tagName}
-                      </span>
-                    );
-                  })}
+              {t.type !== 'deposit' && (
+                <div className="flex justify-between items-start pt-2 border-t border-slate-700/50">
+                  <span className="text-slate-500">Tags</span> 
+                  <div className="flex flex-wrap gap-2 justify-end max-w-[200px]">
+                    {currentTags.length === 0 ? <span className="text-sm italic">No tags</span> : currentTags.map(tagName => {
+                      const tagObj = tagsList.find(tg => tg.name === tagName);
+                      return (
+                        <span key={tagName} className="px-2 py-0.5 rounded text-xs text-white drop-shadow-md" style={{ backgroundColor: tagObj ? tagObj.color : '#64748b' }}>
+                          {tagName}
+                        </span>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
             <div className="space-y-4">
@@ -173,28 +200,27 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData })
               
               {isEditing ? (
                 <div className="space-y-4 bg-slate-900/50 p-4 rounded-lg border border-slate-700">
-                  <div>
-                    <label className="text-xs text-slate-400 mb-2 block">Tags (Select to toggle)</label>
-                    <div className="flex flex-wrap gap-2">
-                      {tagsList.map(tag => {
-                        const isSelected = formData.tags.includes(tag.name);
-                        return (
-                          <button
-                            key={tag.name}
-                            type="button"
-                            onClick={() => toggleTag(tag.name)}
-                            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border hover:opacity-80 ${isSelected ? 'drop-shadow-md' : ''}`}
-                            style={isSelected 
-                              ? { backgroundColor: tag.color, borderColor: tag.color, color: '#ffffff' } 
-                              : { backgroundColor: 'transparent', borderColor: tag.color, color: tag.color }
-                            }
-                          >
-                            {tag.name}
-                          </button>
-                        );
-                      })}
+                  {t.type !== 'deposit' && (
+                    <div>
+                      <label className="text-xs text-slate-400 mb-2 block">Tags (Select to toggle)</label>
+                      <div className="flex flex-wrap gap-2">
+                        {tagsList.map(tag => {
+                          const isSelected = formData.tags.includes(tag.name);
+                          return (
+                            <button
+                              key={tag.name}
+                              type="button"
+                              onClick={() => toggleTag(tag.name)}
+                              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border hover:opacity-80 ${isSelected ? 'drop-shadow-md' : ''}`}
+                              style={isSelected ? { backgroundColor: tag.color, borderColor: tag.color, color: '#ffffff' } : { backgroundColor: 'transparent', borderColor: tag.color, color: tag.color }}
+                            >
+                              {tag.name}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
+                  )}
                   <div>
                     <label className="text-xs text-slate-400">Product URL</label>
                     <input type="url" value={formData.url} onChange={e => setFormData({...formData, url: e.target.value})} className="w-full bg-slate-800 border border-slate-600 rounded p-2.5 text-sm mt-1 outline-none focus:border-indigo-500" />
@@ -268,6 +294,39 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData })
             )}
           </div>
         </div>
+
+        {/* NEW: Full Width Subscription Payment History Table */}
+        {isSub && (
+          <div className="px-8 pb-8">
+            <h3 className="text-lg font-semibold text-white border-b border-slate-700 pb-2 mb-4">Complete Payment History</h3>
+            
+            <div className="bg-slate-900/50 rounded-xl border border-slate-700 overflow-hidden max-h-72 overflow-y-auto">
+              {subHistory.map((tx, idx) => {
+                const chronologicalIteration = subHistory.length - idx; // because array is sorted newest first
+                const isCancelled = tx.billing_cycle === 'cancelled';
+                
+                return (
+                  <div key={tx.id} className="flex justify-between items-center py-3 px-6 border-b border-slate-700/50 last:border-b-0 hover:bg-slate-800/50 transition-colors">
+                    <div className="flex items-center gap-4">
+                      <span className="text-slate-400 text-sm font-medium w-12">#{chronologicalIteration}</span>
+                      <span className="text-slate-200 font-medium">{tx.purchase_date}</span>
+                      
+                      {isCancelled && (
+                        <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded tracking-wider bg-slate-700 text-slate-400 ml-2">
+                          Inactive Record
+                        </span>
+                      )}
+                    </div>
+                    
+                    <span className={`font-bold ${isIncome ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {isIncome ? '+' : '-'}${tx.amount.toFixed(2)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {showFullscreen && t.receipt_file && (

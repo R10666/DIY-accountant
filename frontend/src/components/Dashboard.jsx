@@ -25,11 +25,10 @@ export default function Dashboard({ currentBalance, transactions = [], tagsList 
       const diffDays = (now - tDate) / msPerDay;
       
       if (diffDays <= days && diffDays >= 0) {
-        const refunded = t.refunded_amount || 0;
-        if (t.type === 'adjustment' || t.type === 'deposit') {
+        if (t.type === 'adjustment' || t.type === 'deposit' || t.type === 'refund') {
           return acc + t.amount;
         } else {
-          return acc - (t.amount - refunded);
+          return acc - t.amount;
         }
       }
       return acc;
@@ -75,10 +74,7 @@ export default function Dashboard({ currentBalance, transactions = [], tagsList 
   return (
     <div className="flex flex-col gap-4 w-full">
       
-      {/* TOP ACTION BAR: Using the same 12-col grid for perfect alignment */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 shrink-0">
-        
-        {/* TIME RANGE SELECTOR (Spans 4 cols to perfectly match the fund box) */}
         <div className="lg:col-span-4 bg-slate-800 rounded-xl p-2 border border-slate-700 flex justify-between items-center w-full">
           <div className="flex items-center gap-2 text-slate-300 font-medium text-sm pl-2">
             <Calendar size={16} className="text-indigo-400" />
@@ -103,24 +99,20 @@ export default function Dashboard({ currentBalance, transactions = [], tagsList 
           </div>
         </div>
 
-        {/* INLINE NEW PURCHASE BUTTON (Spans 8 cols, aligned to the right) */}
         <div className="lg:col-span-8 flex justify-end">
           <button 
             onClick={onNewPurchase} 
             className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5 rounded-xl font-medium transition-colors shadow-lg w-full sm:w-auto"
           >
-            + New Purchase
+            + New Transaction
           </button>
         </div>
       </div>
 
-      {/* TOP ROW: Balances on Left, Analytics on Right */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 shrink-0">
         
-        {/* LEFT STATS COLUMN */}
         <div className="lg:col-span-4 flex flex-col gap-4">
           
-          {/* Available Fund Block */}
           <div className="bg-slate-800 rounded-xl p-5 border border-slate-700 relative overflow-hidden flex-1 flex flex-col justify-center">
             <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl -mr-8 -mt-8 pointer-events-none"></div>
             
@@ -160,7 +152,6 @@ export default function Dashboard({ currentBalance, transactions = [], tagsList 
             </div>
           </div>
 
-          {/* Net Changes Block */}
           <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 flex-1 flex flex-col justify-center">
             <h3 className="text-sm font-bold mb-3 text-slate-300">Net Change</h3>
             <div className="space-y-2 text-sm">
@@ -186,7 +177,6 @@ export default function Dashboard({ currentBalance, transactions = [], tagsList 
           </div>
         </div>
 
-        {/* RIGHT ANALYTICS COLUMN */}
         <div className="lg:col-span-8 bg-slate-800 rounded-xl p-5 border border-slate-700 flex flex-col">
           <div className="mb-2">
             <h2 className="text-lg font-bold">Spending Analytics</h2>
@@ -197,7 +187,6 @@ export default function Dashboard({ currentBalance, transactions = [], tagsList 
         </div>
       </div>
 
-      {/* BOTTOM ROW: Fund Trajectory (Full Width) */}
       <div className="bg-slate-800 rounded-xl p-5 border border-slate-700 shrink-0">
         <div className="mb-2">
           <h2 className="text-lg font-bold">Fund Trajectory</h2>

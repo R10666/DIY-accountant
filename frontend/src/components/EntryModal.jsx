@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X } from 'lucide-react';
 
 export default function EntryModal({ availableTags, closeModal, refreshData }) {
+  const [entryType, setEntryType] = useState('purchase'); 
   const [file, setFile] = useState(null);
   
   const [formData, setFormData] = useState({
@@ -45,6 +46,9 @@ export default function EntryModal({ availableTags, closeModal, refreshData }) {
       }
     }
 
+    // Force tags to empty if it's a deposit, just in case they toggled back and forth
+    const finalTags = entryType === 'deposit' ? [] : formData.tags;
+
     try {
       await fetch('http://127.0.0.1:8000/api/transaction', {
         method: 'POST',
@@ -52,13 +56,13 @@ export default function EntryModal({ availableTags, closeModal, refreshData }) {
         body: JSON.stringify({
           title: formData.title,
           amount: parseFloat(formData.amount),
-          type: 'purchase',
+          type: entryType, 
           is_subscription: formData.is_subscription,
           billing_cycle: finalBillingCycle,
           url: formData.url,
           purchase_date: formData.purchase_date,
           notes: formData.notes,
-          tags: JSON.stringify(formData.tags),
+          tags: JSON.stringify(finalTags),
           receipt_file: receiptUrl 
         })
       });
@@ -72,56 +76,79 @@ export default function EntryModal({ availableTags, closeModal, refreshData }) {
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[100] overflow-y-auto">
       <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 w-full max-w-md my-8">
-        <div className="flex justify-between items-center mb-6">
-          <h3 className="text-xl font-bold">Add Purchase</h3>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-xl font-bold">
+            {entryType === 'purchase' ? 'Add Purchase' : 'Add Deposit'}
+          </h3>
           <button onClick={closeModal} className="text-slate-400 hover:text-white"><X size={20} /></button>
+        </div>
+
+        <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-700 mb-6">
+          <button
+            type="button"
+            onClick={() => setEntryType('purchase')}
+            className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${entryType === 'purchase' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+          >
+            Expense (Purchase)
+          </button>
+          <button
+            type="button"
+            onClick={() => setEntryType('deposit')}
+            className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${entryType === 'deposit' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+          >
+            Income (Deposit)
+          </button>
         </div>
         
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="flex gap-4">
             <div className="flex-1">
               <label className="block text-sm font-medium text-slate-400 mb-1">Name *</label>
-              <input type="text" required value={formData.title} onChange={(e) => setFormData({...formData, title: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white outline-none focus:border-indigo-500" placeholder="e.g. Spotify" />
+              <input type="text" required value={formData.title} onChange={(e) => setFormData({...formData, title: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white outline-none focus:border-indigo-500" placeholder={entryType === 'purchase' ? "e.g. Spotify" : "e.g. Paycheck"} />
             </div>
             <div className="w-1/3">
-              <label className="block text-sm font-medium text-slate-400 mb-1">Price *</label>
+              <label className="block text-sm font-medium text-slate-400 mb-1">Amount *</label>
               <input type="number" step="0.01" required value={formData.amount} onChange={(e) => setFormData({...formData, amount: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white outline-none focus:border-indigo-500" placeholder="0.00" />
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-400 mb-1">Purchase Date *</label>
+            <label className="block text-sm font-medium text-slate-400 mb-1">Date *</label>
             <input type="date" required value={formData.purchase_date} onChange={(e) => setFormData({...formData, purchase_date: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white outline-none focus:border-indigo-500" />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-400 mb-2">Tags (Select all that apply)</label>
-            <div className="flex flex-wrap gap-2">
-              {availableTags.map(tag => {
-                const isSelected = formData.tags.includes(tag.name);
-                return (
-                  <button
-                    key={tag.name}
-                    type="button"
-                    onClick={() => toggleTag(tag.name)}
-                    // Increased padding (px-4 py-2) and font size (text-sm) here:
-                    className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 border hover:opacity-80 ${isSelected ? 'drop-shadow-md' : ''}`}
-                    style={isSelected 
-                      ? { backgroundColor: tag.color, borderColor: tag.color, color: '#ffffff' } 
-                      : { backgroundColor: 'transparent', borderColor: tag.color, color: tag.color }
-                    }
-                  >
-                    {tag.name}
-                  </button>
-                );
-              })}
-              {availableTags.length === 0 && <span className="text-sm text-slate-500 italic">No tags created yet.</span>}
+          {/* TAGS SECTION - Hides when Deposit is selected */}
+          {entryType === 'purchase' && (
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-2">Tags (Select all that apply)</label>
+              <div className="flex flex-wrap gap-2">
+                {availableTags.map(tag => {
+                  const isSelected = formData.tags.includes(tag.name);
+                  return (
+                    <button
+                      key={tag.name}
+                      type="button"
+                      onClick={() => toggleTag(tag.name)}
+                      className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 border hover:opacity-80 ${isSelected ? 'drop-shadow-md' : ''}`}
+                      style={isSelected 
+                        ? { backgroundColor: tag.color, borderColor: tag.color, color: '#ffffff' } 
+                        : { backgroundColor: 'transparent', borderColor: tag.color, color: tag.color }
+                      }
+                    >
+                      {tag.name}
+                    </button>
+                  );
+                })}
+                {availableTags.length === 0 && <span className="text-sm text-slate-500 italic">No tags created yet.</span>}
+              </div>
             </div>
-          </div>
+          )}
 
           <label className="flex items-center gap-2 cursor-pointer bg-slate-900 p-3 rounded-lg border border-slate-700">
             <input type="checkbox" checked={formData.is_subscription} onChange={(e) => setFormData({...formData, is_subscription: e.target.checked})} className="w-4 h-4 accent-indigo-500" />
-            <span className="text-sm font-medium text-slate-200">This is a recurring subscription</span>
+            <span className="text-sm font-medium text-slate-200">
+              {entryType === 'purchase' ? 'This is a recurring subscription' : 'This is a recurring deposit'}
+            </span>
           </label>
 
           {formData.is_subscription && (
@@ -140,7 +167,7 @@ export default function EntryModal({ availableTags, closeModal, refreshData }) {
           )}
 
           <div>
-            <label className="block text-sm font-medium text-slate-400 mb-1">Product Page Link (Optional)</label>
+            <label className="block text-sm font-medium text-slate-400 mb-1">Link (Optional)</label>
             <input type="url" value={formData.url} onChange={(e) => setFormData({...formData, url: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white outline-none focus:border-indigo-500" placeholder="https://" />
           </div>
 
@@ -154,8 +181,8 @@ export default function EntryModal({ availableTags, closeModal, refreshData }) {
             <textarea value={formData.notes} onChange={(e) => setFormData({...formData, notes: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white outline-none focus:border-indigo-500 h-20 resize-none" placeholder="Add any details here..."></textarea>
           </div>
 
-          <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-lg font-bold mt-2 transition-colors">
-            Save Purchase
+          <button type="submit" className={`w-full text-white py-3 rounded-lg font-bold mt-2 transition-colors ${entryType === 'purchase' ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}>
+            {entryType === 'purchase' ? 'Save Purchase' : 'Save Deposit'}
           </button>
         </form>
       </div>

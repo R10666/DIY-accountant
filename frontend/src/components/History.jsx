@@ -1,13 +1,49 @@
-import React, { useState } from 'react';
-import { Search, Filter } from 'lucide-react';
+import React, { useState, useRef, useMemo } from 'react';
+import { Search, Filter, CheckSquare } from 'lucide-react';
 
 export default function History({ transactions, tagsList, onViewDetails }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState('date-desc');
   const [selectedFilterTags, setSelectedFilterTags] = useState([]);
-
-  const basePurchases = transactions.filter(t => !t.is_subscription && t.type !== 'adjustment');
   
+  const [showAllTypes, setShowAllTypes] = useState(true);
+  const [typeFilters, setTypeFilters] = useState({
+    purchase: true,
+    deposit: true,
+    refund: true,
+    subscription: true
+  });
+
+  const [highlightedId, setHighlightedId] = useState(null);
+  const rowRefs = useRef({}); 
+
+  const subIterations = useMemo(() => {
+    const counts = {};
+    const iters = {};
+    
+    const sorted = [...transactions].sort((a, b) => new Date(a.purchase_date) - new Date(b.purchase_date));
+    
+    sorted.filter(t => t.is_subscription).forEach(t => {
+      const key = `${t.title}|${t.billing_cycle}`;
+      counts[key] = (counts[key] || 0) + 1;
+      iters[t.id] = counts[key];
+    });
+    
+    return iters;
+  }, [transactions]);
+
+  // Category badge for the fixed-width center column: Subscription,
+  // Deposit, Refund, Purchase all live here so they line up vertically
+  // across every row. Subscription takes priority over the underlying
+  // type (a subscription row is also technically "purchase").
+  const getCategory = (t) => {
+    if (t.is_subscription) return { label: 'Subscription', className: 'bg-purple-900/70 text-purple-300' };
+    if (t.type === 'deposit') return { label: 'Deposit', className: 'bg-sky-900/80 text-sky-300' };
+    if (t.type === 'refund') return { label: 'Refund', className: 'bg-indigo-900/80 text-indigo-300' };
+    if (t.type === 'purchase') return { label: 'Purchase', className: 'bg-pink-900/70 text-pink-300' };
+    return null;
+  };
+
   const toggleFilterTag = (tagName) => {
     setSelectedFilterTags(prev => 
       prev.includes(tagName) 
@@ -16,9 +52,35 @@ export default function History({ transactions, tagsList, onViewDetails }) {
     );
   };
 
-  let processedPurchases = basePurchases.filter(t => {
+  const handleTypeToggle = (typeKey) => {
+    setTypeFilters(prev => {
+      const next = { ...prev, [typeKey]: !prev[typeKey] };
+      const allChecked = Object.values(next).every(Boolean);
+      setShowAllTypes(allChecked);
+      return next;
+    });
+  };
+
+  const handleShowAllToggle = () => {
+    const nextState = !showAllTypes;
+    setShowAllTypes(nextState);
+    setTypeFilters({
+      purchase: nextState,
+      deposit: nextState,
+      refund: nextState,
+      subscription: nextState
+    });
+  };
+
+  let processedPurchases = transactions.filter(t => {
+    if (t.type === 'adjustment') return false;
     if (searchTerm && !t.title.toLowerCase().includes(searchTerm.toLowerCase())) return false;
     
+    if (t.is_subscription && !typeFilters.subscription) return false;
+    if (!t.is_subscription && t.type === 'refund' && !typeFilters.refund) return false;
+    if (!t.is_subscription && t.type === 'deposit' && !typeFilters.deposit) return false;
+    if (!t.is_subscription && t.type === 'purchase' && !typeFilters.purchase) return false;
+
     let txTags = [];
     try { txTags = JSON.parse(t.tags || '[]'); } catch { }
     
@@ -38,11 +100,27 @@ export default function History({ transactions, tagsList, onViewDetails }) {
     if (sortBy === 'alpha-asc') return a.title.localeCompare(b.title);
     return 0;
   });
+
+  const scrollToRefund = (originalTitle) => {
+    const targetTitle = `Refund: ${originalTitle}`;
+    const refundTx = processedPurchases.find(tx => tx.type === 'refund' && tx.title === targetTitle);
+    
+    if (refundTx && rowRefs.current[refundTx.id]) {
+      rowRefs.current[refundTx.id].scrollIntoView({ behavior: 'smooth', block: 'center' });
+      
+      setHighlightedId(refundTx.id);
+      setTimeout(() => {
+        setHighlightedId(null);
+      }, 2000);
+    } else {
+      alert("Refund entry not found. Ensure 'Refunds' is checked in your filters!");
+    }
+  };
   
   return (
     <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
       <div className="p-6 border-b border-slate-700">
-        <h2 className="text-xl font-bold">Purchase History</h2>
+        <h2 className="text-xl font-bold">Transaction History</h2>
       </div>
 
       <div className="p-4 bg-slate-900 border-b border-slate-700 flex flex-col gap-4">
@@ -52,7 +130,7 @@ export default function History({ transactions, tagsList, onViewDetails }) {
             <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
             <input 
               type="text" 
-              placeholder="Search purchases..." 
+              placeholder="Search purchases, deposits, refunds..." 
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white outline-none focus:border-indigo-500"
@@ -66,72 +144,128 @@ export default function History({ transactions, tagsList, onViewDetails }) {
           >
             <option value="date-desc">Newest First</option>
             <option value="date-asc">Oldest First</option>
-            <option value="price-desc">Highest Price</option>
-            <option value="price-asc">Lowest Price</option>
+            <option value="price-desc">Highest Amount</option>
+            <option value="price-asc">Lowest Amount</option>
             <option value="alpha-asc">Alphabetical (A-Z)</option>
           </select>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-700/50">
-          <span className="flex items-center gap-1 text-sm font-medium text-slate-400 mr-2">
-            <Filter size={14} /> Filter by Tags:
-          </span>
-          {tagsList.length === 0 ? (
-            <span className="text-xs text-slate-500 italic">No tags created yet.</span>
-          ) : (
-            tagsList.map(tag => {
-              const isSelected = selectedFilterTags.includes(tag.name);
-              return (
-                <button
-                  key={tag.name}
-                  onClick={() => toggleFilterTag(tag.name)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border hover:opacity-80 ${isSelected ? 'drop-shadow-md' : ''}`}
-                  style={isSelected 
-                    ? { backgroundColor: tag.color, borderColor: tag.color, color: '#ffffff' } 
-                    : { backgroundColor: 'transparent', borderColor: tag.color, color: tag.color }
-                  }
-                >
-                  {tag.name}
-                </button>
-              );
-            })
-          )}
-          
-          {selectedFilterTags.length > 0 && (
-            <button 
-              onClick={() => setSelectedFilterTags([])}
-              className="text-xs text-indigo-400 hover:text-indigo-300 ml-2 underline underline-offset-2 transition-colors"
-            >
-              Clear Filters
-            </button>
-          )}
+        <div className="flex flex-col gap-3 pt-3 border-t border-slate-700/50">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="flex items-center gap-1 text-sm font-medium text-slate-400 mr-2">
+              <CheckSquare size={14} /> Show:
+            </span>
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-300 hover:text-white select-none">
+              <input type="checkbox" checked={showAllTypes} onChange={handleShowAllToggle} className="w-4 h-4 accent-indigo-500 cursor-pointer rounded bg-slate-800 border-slate-600" />
+              All
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-300 hover:text-white select-none">
+              <input type="checkbox" checked={typeFilters.purchase} onChange={() => handleTypeToggle('purchase')} className="w-4 h-4 accent-indigo-500 cursor-pointer rounded bg-slate-800 border-slate-600" />
+              Purchases
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-300 hover:text-white select-none">
+              <input type="checkbox" checked={typeFilters.deposit} onChange={() => handleTypeToggle('deposit')} className="w-4 h-4 accent-indigo-500 cursor-pointer rounded bg-slate-800 border-slate-600" />
+              Deposits
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-300 hover:text-white select-none">
+              <input type="checkbox" checked={typeFilters.refund} onChange={() => handleTypeToggle('refund')} className="w-4 h-4 accent-indigo-500 cursor-pointer rounded bg-slate-800 border-slate-600" />
+              Refunds
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-300 hover:text-white select-none">
+              <input type="checkbox" checked={typeFilters.subscription} onChange={() => handleTypeToggle('subscription')} className="w-4 h-4 accent-indigo-500 cursor-pointer rounded bg-slate-800 border-slate-600" />
+              Subscriptions
+            </label>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex items-center gap-1 text-sm font-medium text-slate-400 mr-2">
+              <Filter size={14} /> Tags:
+            </span>
+            {tagsList.length === 0 ? (
+              <span className="text-xs text-slate-500 italic">No tags created yet.</span>
+            ) : (
+              tagsList.map(tag => {
+                const isSelected = selectedFilterTags.includes(tag.name);
+                return (
+                  <button
+                    key={tag.name}
+                    onClick={() => toggleFilterTag(tag.name)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border hover:opacity-80 ${isSelected ? 'drop-shadow-md' : ''}`}
+                    style={isSelected 
+                      ? { backgroundColor: tag.color, borderColor: tag.color, color: '#ffffff' } 
+                      : { backgroundColor: 'transparent', borderColor: tag.color, color: tag.color }
+                    }
+                  >
+                    {tag.name}
+                  </button>
+                );
+              })
+            )}
+            
+            {selectedFilterTags.length > 0 && (
+              <button 
+                onClick={() => setSelectedFilterTags([])}
+                className="text-xs text-indigo-400 hover:text-indigo-300 ml-2 underline underline-offset-2 transition-colors"
+              >
+                Clear Tag Filters
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      <div className="divide-y divide-slate-700/50">
+      <div>
         {processedPurchases.length === 0 ? (
           <div className="p-12 flex flex-col items-center justify-center text-center">
             <Filter size={32} className="text-slate-600 mb-3" />
-            <p className="text-slate-400 font-medium">No purchases match your filters.</p>
-            <p className="text-slate-500 text-sm mt-1">Try adjusting your search or unselecting some tags.</p>
+            <p className="text-slate-400 font-medium">No transactions match your filters.</p>
+            <p className="text-slate-500 text-sm mt-1">Try adjusting your search or checkboxes.</p>
           </div>
         ) : (
           processedPurchases.map(t => {
-            const isFullyRefunded = (t.refunded_amount || 0) >= t.amount;
+            const isFullyRefunded = t.type === 'purchase' && (t.refunded_amount || 0) >= t.amount;
+            const isIncome = t.type === 'deposit' || t.type === 'refund';
+            const isHighlighted = highlightedId === t.id;
+            const category = getCategory(t);
             
             let txTags = [];
             try { txTags = JSON.parse(t.tags || '[]'); } catch { }
 
+            let amountColor = 'text-rose-400'; 
+            if (isFullyRefunded) amountColor = 'text-slate-500'; 
+            else if (isIncome) amountColor = 'text-emerald-400'; 
+
             return (
-              <div key={t.id} className="flex justify-between items-center py-4 px-6 hover:bg-slate-700/30 transition-colors">
-                <div>
+              <div 
+                key={t.id} 
+                ref={(el) => (rowRefs.current[t.id] = el)} 
+                className={`flex justify-between items-center py-4 px-6 border-b border-slate-700/50 last:border-b-0 transition-all duration-500 ${isHighlighted ? 'bg-indigo-900/40 border-l-4 border-l-indigo-400' : 'hover:bg-slate-700/30 border-l-4 border-l-transparent'}`}
+              >
+                {/* Left: title, refund status, tags/date. */}
+                <div className="flex-1 min-w-0 pr-4">
                   <div className="flex items-center gap-2">
-                    <p className={`font-semibold ${isFullyRefunded ? 'line-through text-slate-500' : 'text-slate-200'}`}>{t.title}</p>
-                    {t.refunded_amount > 0 && <span className="text-xs bg-emerald-900 text-emerald-400 px-2 py-0.5 rounded">Refunded</span>}
+                    <p className={`font-semibold truncate ${isFullyRefunded ? 'line-through text-slate-500' : 'text-slate-200'}`}>
+                      {t.title}
+                    </p>
+
+                    {t.refunded_amount > 0 && t.type === 'purchase' ? (
+                      <button 
+                        onClick={() => scrollToRefund(t.title)}
+                        title="Click to find the refund entry"
+                        className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded shrink-0 transition-colors cursor-pointer hover:text-white ${
+                          isFullyRefunded 
+                            ? 'bg-emerald-900 hover:bg-emerald-700 text-emerald-400' 
+                            : 'bg-amber-900/80 hover:bg-amber-700 text-amber-400'
+                        }`}
+                      >
+                        {isFullyRefunded ? 'Fully Refunded' : 'Partially Refunded'}
+                      </button>
+                    ) : null}
                   </div>
                   
                   <div className="flex items-center gap-2 mt-2 flex-wrap">
                     <span className="text-xs text-slate-400 mr-1">{t.purchase_date}</span>
+
                     {txTags.map(tagName => {
                       const tagObj = tagsList.find(tg => tg.name === tagName);
                       return (
@@ -146,8 +280,33 @@ export default function History({ transactions, tagsList, onViewDetails }) {
                     })}
                   </div>
                 </div>
-                <div className="flex items-center gap-6">
-                  <span className={`font-bold ${isFullyRefunded ? 'text-slate-500' : 'text-slate-200'}`}>${t.amount.toFixed(2)}</span>
+
+                {/* Center: category badge — Subscription, Deposit, Refund, and
+                    Purchase all live here in a fixed-width column, so they line
+                    up vertically across every row regardless of title length.
+                    Payment #x now stacks directly underneath the badge, using
+                    the empty vertical space in this column instead of crowding
+                    the tags row. */}
+                <div className="w-36 shrink-0 flex flex-col items-center justify-center gap-1">
+                  {category ? (
+                    <span className={`text-xs uppercase font-bold px-3 py-1 rounded ${category.className}`}>
+                      {category.label}
+                    </span>
+                  ) : null}
+
+                  {t.is_subscription ? (
+                    <span className="text-[10px] text-purple-300/80 font-medium">
+                      Payment #{subIterations[t.id]}
+                    </span>
+                  ) : null}
+                </div>
+                
+                {/* Right: amount, button */}
+                <div className="flex items-center gap-6 shrink-0">
+                  <span className={`font-bold ${amountColor} w-24 text-right`}>
+                    {isIncome ? '+' : '-'}${t.amount.toFixed(2)}
+                  </span>
+                  
                   <button onClick={() => onViewDetails(t)} className="text-sm bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1.5 rounded-lg transition-colors">
                     View Details
                   </button>

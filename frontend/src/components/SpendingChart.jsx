@@ -3,20 +3,21 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 
 export default function SpendingChart({ transactions, tagsList }) {
   const chartData = useMemo(() => {
-    const purchases = transactions.filter(t => t.type === 'purchase' && !t.is_subscription);
+    // UPDATED: Allow isolated refund entries into the calculation
+    const validTx = transactions.filter(t => (t.type === 'purchase' || t.type === 'refund') && !t.is_subscription);
     const spendingByTag = {};
 
-    purchases.forEach(t => {
-      const amount = t.amount - (t.refunded_amount || 0);
-      if (amount <= 0) return; 
+    validTx.forEach(t => {
+      // Refunds REDUCE your category spend, purchases INCREASE it
+      const impact = t.type === 'refund' ? -t.amount : t.amount;
 
       let txTags = [];
       try { txTags = JSON.parse(t.tags || '[]'); } catch { }
 
       if (txTags.length === 0) {
-        spendingByTag['Untagged'] = (spendingByTag['Untagged'] || 0) + amount;
+        spendingByTag['Untagged'] = (spendingByTag['Untagged'] || 0) + impact;
       } else {
-        const splitAmount = amount / txTags.length;
+        const splitAmount = impact / txTags.length;
         txTags.forEach(tag => {
           spendingByTag[tag] = (spendingByTag[tag] || 0) + splitAmount;
         });
@@ -26,7 +27,7 @@ export default function SpendingChart({ transactions, tagsList }) {
     return Object.keys(spendingByTag)
       .map(tag => ({
         name: tag,
-        amount: spendingByTag[tag]
+        amount: Math.max(0, spendingByTag[tag]) // Floor at zero so chart doesn't break if refunds > purchases
       }))
       .sort((a, b) => b.amount - a.amount);
   }, [transactions]);

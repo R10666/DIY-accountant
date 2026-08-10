@@ -27,9 +27,12 @@ export default function FundChart({ transactions, timeRange }) {
     const grouped = {};
     sorted.forEach(t => {
       if (!grouped[t.purchase_date]) grouped[t.purchase_date] = 0;
-      const amount = t.type === 'adjustment' || t.type === 'deposit' 
+      
+      // UPDATED MATH: Add refunds and deposits, subtract purchases. No double counting!
+      const amount = (t.type === 'adjustment' || t.type === 'deposit' || t.type === 'refund') 
         ? t.amount 
-        : -(t.amount - (t.refunded_amount || 0));
+        : -t.amount;
+        
       grouped[t.purchase_date] += amount;
     });
 
@@ -48,11 +51,7 @@ export default function FundChart({ transactions, timeRange }) {
 
     let activeBal = 0;
 
-    // FIX: don't seed the future projection from every historical
-    // subscription row (that caused 5-6x double counting once multiple
-    // monthly rows' recurrence checks started landing on the same dates).
-    // Collapse to ONE anchor per distinct subscription — its most recent
-    // logged occurrence — so recurrence is projected forward exactly once.
+    // Deduplicate subscriptions. Collapse to ONE anchor per distinct subscription 
     const latestSubByKey = {};
     transactions.filter(t => t.is_subscription).forEach(t => {
       const key = `${t.title}|${t.billing_cycle}`;
@@ -72,12 +71,7 @@ export default function FundChart({ transactions, timeRange }) {
         activeBal += grouped[dStr];
       }
 
-      // FIX: only re-simulate recurring subscription charges for days AFTER
-      // today. Past days already have their real charges accounted for via
-      // `grouped` above — resimulating them here was double- (or
-      // multiple-) counting every already-logged subscription payment,
-      // which is why switching to daily points corrupted the historical
-      // line too, not just the projection.
+      // Only re-simulate recurring charges for days AFTER today
       if (isFuture) {
         subs.forEach(sub => {
           const subDate = new Date(sub.purchase_date);
@@ -94,7 +88,12 @@ export default function FundChart({ transactions, timeRange }) {
               if (days > 0 && diffDays % days === 0) hit = true;
             }
             if (hit) {
-              activeBal -= (sub.amount - (sub.refunded_amount || 0));
+              // UPDATED MATH: Add recurring deposits, subtract recurring purchases
+              if (sub.type === 'deposit') {
+                activeBal += sub.amount;
+              } else {
+                activeBal -= sub.amount; // Ignore refunded amounts during future projections
+              }
             }
           }
         });
@@ -201,19 +200,10 @@ export default function FundChart({ transactions, timeRange }) {
     return Array.from(new Set([...allDates, ...monthlyTicks])).sort((a, b) => new Date(a) - new Date(b));
   }, [visibleData, monthlyTicks]);
 
-  // FIX: previously the offset was forced to exactly 0 or 1 whenever a line
-  // never crossed zero, which places the green/red boundary EXACTLY on top
-  // of that line's own minimum (or maximum) value. SVG resolves that exact
-  // boundary pixel ambiguously, so whichever flat low point happened to be
-  // visible after panning/zooming could render red even though it was well
-  // above $0. The robust fix: only use the two-color gradient when a line
-  // genuinely straddles zero (some points positive, some negative) — then
-  // the transition sits safely INSIDE the data range, not on its edge. If a
-  // line stays entirely on one side of zero, just paint it a single solid
-  // color; there's no split to render in the first place.
   const computeOffset = (values) => {
     const max = Math.max(...values, 0);
     const min = Math.min(...values, 0);
+    if (max === min) return 1;
     return max / (max - min);
   };
 
@@ -221,9 +211,9 @@ export default function FundChart({ transactions, timeRange }) {
     if (values.length === 0) return positiveColor;
     const max = Math.max(...values);
     const min = Math.min(...values);
-    if (min >= 0) return positiveColor; // never dips negative -> solid, no boundary ambiguity
-    if (max <= 0) return negativeColor; // never goes positive -> solid, no boundary ambiguity
-    return `url(#${gradientId})`; // genuinely crosses zero -> gradient boundary is safely mid-range
+    if (min >= 0) return positiveColor; 
+    if (max <= 0) return negativeColor; 
+    return `url(#${gradientId})`; 
   };
 
   const { actualOffset, predictedOffset, actualStroke, predictedStroke } = useMemo(() => {
@@ -256,7 +246,6 @@ export default function FundChart({ transactions, timeRange }) {
       onWheel={handleWheel}
     >
       <ResponsiveContainer width="100%" height="100%">
-        {/* Removed 'type="monotone"' so lines are straight point-to-point connections */}
         <LineChart data={visibleData} margin={{ top: 25, right: 10, left: -10, bottom: 10 }}>
           <defs>
             <linearGradient id="splitColorActual" x1="0" y1="0" x2="0" y2="1">
@@ -305,7 +294,6 @@ export default function FundChart({ transactions, timeRange }) {
           <ReferenceLine y={0} stroke="#ef4444" strokeDasharray="3 3" strokeOpacity={0.7} />
           <ReferenceLine x={new Date().toISOString().split('T')[0]} stroke="#64748b" strokeDasharray="3 3" label={{ position: 'top', value: 'Today', fill: '#94a3b8', fontSize: 12 }} />
           
-          {/* Straight linear connection lines without smoothing */}
           <Line dataKey="actual" stroke={actualStroke} strokeWidth={2.5} dot={false} activeDot={{ r: 5 }} name="actual" />
           <Line dataKey="predicted" stroke={predictedStroke} strokeWidth={2.5} strokeDasharray="4 4" dot={false} activeDot={{ r: 5 }} name="predicted" />
         </LineChart>
