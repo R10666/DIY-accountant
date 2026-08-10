@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Edit2, Check, RefreshCcw, ExternalLink, UploadCloud, Trash2, X, Maximize2 } from 'lucide-react';
-import { getLinkPreview, updateTransaction, updateSubscription, updateSubscriptionPayment, createTransaction, uploadFile } from '../api';
+import { getLinkPreview, updateTransaction, updateSubscription, updateSubscriptionPayment, createTransaction, uploadFile, deleteTransaction, deleteSubscription } from '../api';
 
 // Accepts `transactions` prop to generate the subscription payment history table
 export default function TransactionDetails({ t, tagsList, onBack, refreshData, transactions }) {
@@ -126,6 +126,35 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData, t
     }
   };
 
+  // FIX/NEW: deleting a subscription row deletes the whole SUBSCRIPTION
+  // (definition + all its payment history), not just this one payment.
+  // A single subscription_payments row can't safely be deleted on its
+  // own — the sync engine anchors future generation off the MOST RECENT
+  // payment date, so deleting just the latest one would simply get
+  // silently regenerated the next time data refreshes. Deleting the
+  // whole subscription sidesteps that entirely, and is clearly labeled
+  // as different from "Stop" (which pauses billing but keeps history).
+  const handleDelete = async () => {
+    const confirmMessage = isSub
+      ? `Delete "${t.title}" permanently? This removes the subscription AND all ${subHistory.length} payment${subHistory.length === 1 ? '' : 's'} of its history — this can't be undone.\n\nIf you just want to pause future billing and keep the history, use "Stop" on the Subscriptions page instead.`
+      : `Delete "${t.title}" permanently? This can't be undone.`;
+
+    if (!confirm(confirmMessage)) return;
+
+    try {
+      if (isSub) {
+        await deleteSubscription(t.subscription_id);
+      } else {
+        await deleteTransaction(t.id);
+      }
+      refreshData();
+      onBack();
+    } catch (error) {
+      console.error("Failed to delete:", error);
+      alert(`Couldn't delete this ${isSub ? 'subscription' : 'transaction'}: ${error.message}`);
+    }
+  };
+
   const handleInlineUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -186,6 +215,9 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData, t
                 <RefreshCcw size={16} /> Process Refund
               </button>
             )}
+            <button onClick={handleDelete} className="flex items-center gap-2 text-rose-400 hover:text-rose-300 bg-rose-900/30 hover:bg-rose-900/50 px-4 py-2 rounded-lg transition-colors">
+              <Trash2 size={16} /> {isSub ? 'Delete Subscription' : 'Delete'}
+            </button>
           </div>
         </div>
 

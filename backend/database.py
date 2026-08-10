@@ -41,6 +41,9 @@ def init_db():
 
     # One record per recurring commitment, with a single authoritative
     # `status`. Stopping/restarting is ONE update to ONE row.
+    # end_date / max_installments are both optional — a subscription can
+    # set either, neither (runs indefinitely until manually stopped), or
+    # in principle both, in which case whichever limit is hit first wins.
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS subscriptions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,12 +53,25 @@ def init_db():
             billing_cycle TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'active',
             start_date TEXT NOT NULL,
+            end_date TEXT,
+            max_installments INTEGER,
             url TEXT,
             notes TEXT,
             tags TEXT DEFAULT '[]',
             receipt_file TEXT
         )
     ''')
+
+    # Migration for anyone with an existing finance.db from before this
+    # feature existed: CREATE TABLE IF NOT EXISTS only applies to brand
+    # new databases, so a table that already exists needs its new columns
+    # added explicitly. SQLite has no "ADD COLUMN IF NOT EXISTS", so this
+    # just tries each one and ignores the error if it's already there.
+    for column_def in ("end_date TEXT", "max_installments INTEGER"):
+        try:
+            cursor.execute(f"ALTER TABLE subscriptions ADD COLUMN {column_def}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
     # Every realized payment for a subscription is its own row here, tied
     # to exactly one subscription_id. This is what gets summed for

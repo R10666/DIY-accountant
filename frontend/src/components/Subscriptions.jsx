@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { RefreshCw, TrendingUp, TrendingDown, ArrowRight, Calendar, StopCircle, PlayCircle } from 'lucide-react';
-import { updateSubscription } from '../api';
+import { RefreshCw, TrendingUp, TrendingDown, ArrowRight, Calendar, StopCircle, PlayCircle, Trash2 } from 'lucide-react';
+import { updateSubscription, deleteSubscription } from '../api';
 
 // `subscriptions` now comes straight from GET /api/subscriptions — status,
 // payment_count, lifetime_total, and next_due_date are all computed
@@ -28,8 +28,23 @@ export default function Subscriptions({ subscriptions, transactions, onViewDetai
   };
 
   const handleRestart = async (sub) => {
+    const wasCompleted = sub.status === 'completed';
     const cycle = prompt(`Restart "${sub.title}" — confirm billing cycle (weekly, monthly, yearly, or "N days"):`, sub.billing_cycle);
     if (!cycle) return;
+
+    // A subscription that finished its planned run (hit its end_date or
+    // max_installments) still has those limits stored. If we just flip
+    // status back to 'active' without clearing them, the next sync would
+    // immediately see the limit already met and flip it straight back to
+    // 'completed' — a "restart" that silently generates nothing. Confirm
+    // that explicitly and clear the old limits when that's the case.
+    let clearLimits = false;
+    if (wasCompleted) {
+      clearLimits = window.confirm(
+        `"${sub.title}" already completed its full planned run${sub.max_installments ? ` (${sub.max_installments} payments)` : ''}${sub.end_date ? ` (ending ${sub.end_date})` : ''}.\n\nRestarting will clear that end condition so it continues indefinitely — set a new one afterward via "Edit End Condition" if you want it to stop again later.\n\nContinue?`
+      );
+      if (!clearLimits) return;
+    }
 
     setIsProcessing(true);
     try {
@@ -37,11 +52,89 @@ export default function Subscriptions({ subscriptions, transactions, onViewDetai
       // just resume forward from last_payment_date the next time the
       // server syncs, since the subscription row itself never went away —
       // only its status did.
-      await updateSubscription(sub.id, { status: 'active', billing_cycle: cycle });
+      const payload = { status: 'active', billing_cycle: cycle };
+      if (clearLimits) {
+        payload.end_date = null;
+        payload.max_installments = null;
+      }
+      await updateSubscription(sub.id, payload);
       if (refreshData) await refreshData();
     } catch (error) {
       console.error("Failed to restart subscription:", error);
       alert(`Couldn't restart "${sub.title}": ${error.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // NEW: lets an ACTIVE subscription's end condition be set, changed, or
+  // cleared without a full Stop/Restart cycle. Uses the same lightweight
+  // prompt()-based pattern as Restart's billing-cycle prompt rather than
+  // a full modal, to stay consistent with the existing interaction style.
+  const handleEditEndCondition = async (sub) => {
+    const current = sub.max_installments
+      ? `after ${sub.max_installments} payments`
+      : sub.end_date
+        ? `on ${sub.end_date}`
+        : 'never (ongoing)';
+
+    const choice = prompt(
+      `Edit when "${sub.title}" ends.\nCurrently: ${current}\n\n` +
+      `Type one of:\n  "never" — remove any end condition\n  a date like 2026-12-31 — end on that date\n  a number like 12 — end after that many payments`,
+      sub.max_installments ? String(sub.max_installments) : (sub.end_date || 'never')
+    );
+    if (choice === null) return;
+
+    const trimmed = choice.trim();
+    let payload;
+    if (trimmed === '' || trimmed.toLowerCase() === 'never') {
+      payload = { end_date: null, max_installments: null };
+    } else if (/^\d+$/.test(trimmed)) {
+      const n = parseInt(trimmed, 10);
+      if (n <= 0) {
+        alert("Number of payments must be at least 1.");
+        return;
+      }
+      if (n <= (sub.payment_count || 0)) {
+        alert(`"${sub.title}" already has ${sub.payment_count} payment${sub.payment_count === 1 ? '' : 's'} logged — a limit of ${n} would mark it completed immediately. Choose a higher number if that's not what you want.`);
+      }
+      payload = { max_installments: n, end_date: null };
+    } else if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      payload = { end_date: trimmed, max_installments: null };
+    } else {
+      alert('Not recognized — enter "never", a date as YYYY-MM-DD, or a whole number of payments.');
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      await updateSubscription(sub.id, payload);
+      if (refreshData) await refreshData();
+    } catch (error) {
+      console.error("Failed to update end condition:", error);
+      alert(`Couldn't update "${sub.title}": ${error.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // NEW: distinct from Stop — this removes the subscription AND every
+  // payment in its history permanently, rather than just pausing future
+  // billing. The confirmation is deliberately more explicit about that
+  // difference, since it's the kind of action that's easy to reach for
+  // by mistake when "Stop" was what was actually wanted.
+  const handleDelete = async (sub) => {
+    const paymentCount = sub.payment_count || 0;
+    const confirmMessage = `Delete "${sub.title}" permanently? This removes the subscription AND all ${paymentCount} payment${paymentCount === 1 ? '' : 's'} of its history — this can't be undone.\n\nIf you just want to pause future billing and keep the history, use "Stop" instead.`;
+    if (!window.confirm(confirmMessage)) return;
+
+    setIsProcessing(true);
+    try {
+      await deleteSubscription(sub.id);
+      if (refreshData) await refreshData();
+    } catch (error) {
+      console.error("Failed to delete subscription:", error);
+      alert(`Couldn't delete "${sub.title}": ${error.message}`);
     } finally {
       setIsProcessing(false);
     }
@@ -84,7 +177,7 @@ export default function Subscriptions({ subscriptions, transactions, onViewDetai
   const deposits = subscriptions.filter(s => s.type === 'deposit');
 
   const getMonthlyImpact = (sub) => {
-    if (sub.status === 'cancelled') return 0; // Inactive costs nothing
+    if (sub.status !== 'active') return 0; // Inactive/completed costs nothing further
     let amount = sub.amount;
     if (sub.billing_cycle === 'weekly') return amount * (52 / 12);
     if (sub.billing_cycle === 'yearly') return amount / 12;
@@ -101,12 +194,23 @@ export default function Subscriptions({ subscriptions, transactions, onViewDetai
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
+  // A subscription's status is one of 'active' | 'cancelled' | 'completed'.
+  // 'completed' means it finished its own planned run (hit end_date or
+  // max_installments) rather than being manually stopped — worth telling
+  // apart from a plain Stop, so it doesn't look like something the user
+  // did or forgot to do.
+  const statusInfo = (sub) => {
+    if (sub.status === 'active') return { label: 'Active', className: 'bg-emerald-900/60 text-emerald-400' };
+    if (sub.status === 'completed') return { label: 'Completed', className: 'bg-indigo-900/60 text-indigo-400' };
+    return { label: 'Inactive', className: 'bg-slate-700 text-slate-400' };
+  };
+
   // Only calculate totals using ACTIVE subscriptions
   const monthlyExpenseTotal = expenses.reduce((acc, sub) => acc + getMonthlyImpact(sub), 0);
   const monthlyDepositTotal = deposits.reduce((acc, sub) => acc + getMonthlyImpact(sub), 0);
   const netMonthly = monthlyDepositTotal - monthlyExpenseTotal;
-  const activeExpenseCount = expenses.filter(e => e.status !== 'cancelled').length;
-  const activeDepositCount = deposits.filter(d => d.status !== 'cancelled').length;
+  const activeExpenseCount = expenses.filter(e => e.status === 'active').length;
+  const activeDepositCount = deposits.filter(d => d.status === 'active').length;
 
   const renderList = (subs, isIncome) => {
     if (subs.length === 0) {
@@ -117,10 +221,10 @@ export default function Subscriptions({ subscriptions, transactions, onViewDetai
       );
     }
 
-    // Sort: Active items top, Inactive items bottom. Then by highest price.
+    // Sort: Active items top, everything else (cancelled/completed) below. Then by highest price.
     const sortedSubs = [...subs].sort((a, b) => {
-      const aActive = a.status !== 'cancelled';
-      const bActive = b.status !== 'cancelled';
+      const aActive = a.status === 'active';
+      const bActive = b.status === 'active';
       if (aActive && !bActive) return -1;
       if (!aActive && bActive) return 1;
       return b.amount - a.amount;
@@ -129,8 +233,18 @@ export default function Subscriptions({ subscriptions, transactions, onViewDetai
     return (
       <div className="flex flex-col gap-4">
         {sortedSubs.map(sub => {
-          const isActive = sub.status !== 'cancelled';
+          const isActive = sub.status === 'active';
           const monthlyAmount = getMonthlyImpact(sub);
+          const status = statusInfo(sub);
+
+          // "Ends" summary shown under the billing-cycle chip: the plan
+          // as set, regardless of current status, so it's visible even
+          // on a completed/cancelled card.
+          const endSummary = sub.max_installments
+            ? `${Math.min(sub.payment_count, sub.max_installments)}/${sub.max_installments} payments`
+            : sub.end_date
+              ? `Ends ${sub.end_date}`
+              : null;
 
           return (
             <div key={sub.id} className={`rounded-xl p-5 border transition-all ${isActive ? 'bg-slate-800 border-slate-700 hover:border-slate-500 hover:shadow-lg' : 'bg-slate-800/40 border-slate-700/50 opacity-80'}`}>
@@ -139,15 +253,22 @@ export default function Subscriptions({ subscriptions, transactions, onViewDetai
                 <div className="pr-4">
                   <div className="flex items-center gap-3">
                     <h4 className={`text-lg font-bold ${isActive ? 'text-slate-100' : 'text-slate-400'}`}>{sub.title}</h4>
-                    <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded tracking-wider ${isActive ? 'bg-emerald-900/60 text-emerald-400' : 'bg-slate-700 text-slate-400'}`}>
-                      {isActive ? 'Active' : 'Inactive'}
+                    <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded tracking-wider ${status.className}`}>
+                      {status.label}
                     </span>
                   </div>
-                  {isActive && (
-                    <span className="inline-block mt-1 text-[10px] uppercase font-bold text-slate-400 tracking-wider bg-slate-900 border border-slate-700 px-2 py-0.5 rounded">
-                      {sub.billing_cycle}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    {isActive && (
+                      <span className="inline-block text-[10px] uppercase font-bold text-slate-400 tracking-wider bg-slate-900 border border-slate-700 px-2 py-0.5 rounded">
+                        {sub.billing_cycle}
+                      </span>
+                    )}
+                    {endSummary && (
+                      <span className="inline-block text-[10px] uppercase font-bold text-slate-400 tracking-wider bg-slate-900 border border-slate-700 px-2 py-0.5 rounded">
+                        {endSummary}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="text-right shrink-0">
@@ -187,15 +308,25 @@ export default function Subscriptions({ subscriptions, transactions, onViewDetai
 
                 <div className="flex gap-2 shrink-0 ml-4">
                   {isActive ? (
-                    <button
-                      onClick={() => handleStop(sub)}
-                      disabled={isProcessing}
-                      className="flex items-center gap-1.5 bg-slate-800 hover:bg-rose-900/40 text-rose-400 hover:text-rose-300 px-3 py-2.5 rounded-lg transition-colors border border-rose-900/60 hover:border-rose-700 shadow-sm disabled:opacity-50"
-                      title="Stop Subscription"
-                    >
-                      <StopCircle size={18} />
-                      <span className="text-sm font-medium">{isProcessing ? 'Stopping…' : 'Stop'}</span>
-                    </button>
+                    <>
+                      <button
+                        onClick={() => handleStop(sub)}
+                        disabled={isProcessing}
+                        className="flex items-center gap-1.5 bg-slate-800 hover:bg-rose-900/40 text-rose-400 hover:text-rose-300 px-3 py-2.5 rounded-lg transition-colors border border-rose-900/60 hover:border-rose-700 shadow-sm disabled:opacity-50"
+                        title="Stop Subscription"
+                      >
+                        <StopCircle size={18} />
+                        <span className="text-sm font-medium">{isProcessing ? 'Stopping…' : 'Stop'}</span>
+                      </button>
+                      <button
+                        onClick={() => handleEditEndCondition(sub)}
+                        disabled={isProcessing}
+                        className="bg-slate-800 hover:bg-indigo-900/40 text-slate-400 hover:text-indigo-400 p-2.5 rounded-lg transition-colors border border-slate-700 hover:border-indigo-800 shadow-sm disabled:opacity-50 flex items-center justify-center"
+                        title="Edit When This Ends"
+                      >
+                        <Calendar size={18} />
+                      </button>
+                    </>
                   ) : (
                     <button
                       onClick={() => handleRestart(sub)}
@@ -207,6 +338,14 @@ export default function Subscriptions({ subscriptions, transactions, onViewDetai
                       <span className="text-sm font-medium">{isProcessing ? 'Restarting…' : 'Restart'}</span>
                     </button>
                   )}
+                  <button
+                    onClick={() => handleDelete(sub)}
+                    disabled={isProcessing}
+                    className="bg-slate-800 hover:bg-rose-900/40 text-slate-500 hover:text-rose-400 p-2.5 rounded-lg transition-colors border border-slate-700 hover:border-rose-800 shadow-sm disabled:opacity-50 flex items-center justify-center"
+                    title="Delete Subscription Permanently (removes all history)"
+                  >
+                    <Trash2 size={18} />
+                  </button>
                   <button
                     onClick={() => handleViewDetails(sub)}
                     className="bg-slate-700 hover:bg-slate-600 text-slate-200 p-2.5 rounded-lg transition-colors border border-slate-600 shadow-sm flex items-center justify-center"

@@ -1,36 +1,69 @@
 import React, { useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
-export default function SpendingChart({ transactions, tagsList }) {
+// FIX: viewMode used to be internal state here, with its own toggle row
+// rendered above the chart — which ate into the chart's vertical space
+// inside an already-fixed-height card, making it look squished. The
+// toggle now lives in Dashboard's header row instead (free horizontal
+// space next to the "Spending Analytics" title costs nothing vertically),
+// and is passed down here as a plain prop.
+export default function SpendingChart({ transactions, tagsList, viewMode = 'amount' }) {
   const chartData = useMemo(() => {
-    // UPDATED: Allow isolated refund entries into the calculation
-    const validTx = transactions.filter(t => (t.type === 'purchase' || t.type === 'refund') && !t.is_subscription);
     const spendingByTag = {};
+    const countByTag = {};
 
-    validTx.forEach(t => {
-      // Refunds REDUCE your category spend, purchases INCREASE it
-      const impact = t.type === 'refund' ? -t.amount : t.amount;
+    // Dollar amount: purchases AND refunds (a refund reduces that tag's
+    // spend), split proportionally across a transaction's tags so the
+    // amounts actually sum to the true total spend.
+    transactions
+      .filter(t => (t.type === 'purchase' || t.type === 'refund') && !t.is_subscription)
+      .forEach(t => {
+        const impact = t.type === 'refund' ? -t.amount : t.amount;
+        let txTags = [];
+        try { txTags = JSON.parse(t.tags || '[]'); } catch { }
 
-      let txTags = [];
-      try { txTags = JSON.parse(t.tags || '[]'); } catch { }
+        if (txTags.length === 0) {
+          spendingByTag['Untagged'] = (spendingByTag['Untagged'] || 0) + impact;
+        } else {
+          const splitAmount = impact / txTags.length;
+          txTags.forEach(tag => {
+            spendingByTag[tag] = (spendingByTag[tag] || 0) + splitAmount;
+          });
+        }
+      });
 
-      if (txTags.length === 0) {
-        spendingByTag['Untagged'] = (spendingByTag['Untagged'] || 0) + impact;
-      } else {
-        const splitAmount = impact / txTags.length;
-        txTags.forEach(tag => {
-          spendingByTag[tag] = (spendingByTag[tag] || 0) + splitAmount;
-        });
-      }
-    });
+    // Item count: only real purchases — a refund isn't "an item bought",
+    // it's the undoing of one, so it doesn't add or subtract from the
+    // count. Deliberately NOT split across tags like the dollar amount
+    // is: an item with two tags genuinely counts once toward each one,
+    // since this answers "how many items touch this tag", not "how do
+    // dollars divide across tags".
+    transactions
+      .filter(t => t.type === 'purchase' && !t.is_subscription)
+      .forEach(t => {
+        let txTags = [];
+        try { txTags = JSON.parse(t.tags || '[]'); } catch { }
 
-    return Object.keys(spendingByTag)
-      .map(tag => ({
-        name: tag,
-        amount: Math.max(0, spendingByTag[tag]) // Floor at zero so chart doesn't break if refunds > purchases
-      }))
-      .sort((a, b) => b.amount - a.amount);
-  }, [transactions]);
+        if (txTags.length === 0) {
+          countByTag['Untagged'] = (countByTag['Untagged'] || 0) + 1;
+        } else {
+          txTags.forEach(tag => {
+            countByTag[tag] = (countByTag[tag] || 0) + 1;
+          });
+        }
+      });
+
+    const allTags = new Set([...Object.keys(spendingByTag), ...Object.keys(countByTag)]);
+
+    const data = Array.from(allTags).map(tag => ({
+      name: tag,
+      amount: Math.max(0, spendingByTag[tag] || 0), // Floor at zero so chart doesn't break if refunds > purchases
+      count: countByTag[tag] || 0,
+    }));
+
+    const sortKey = viewMode === 'count' ? 'count' : 'amount';
+    return data.sort((a, b) => b[sortKey] - a[sortKey]);
+  }, [transactions, viewMode]);
 
   const getColorForTag = (tagName) => {
     if (tagName === 'Untagged') return '#64748b';
@@ -64,15 +97,19 @@ export default function SpendingChart({ transactions, tagsList }) {
             fontSize={12}
             tickLine={false}
             axisLine={false}
-            tickFormatter={(value) => `$${value}`}
+            allowDecimals={viewMode === 'amount'}
+            tickFormatter={(value) => viewMode === 'count' ? value : `$${value}`}
           />
           <Tooltip 
             cursor={{ fill: '#334155', opacity: 0.4 }}
             contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', borderRadius: '8px', color: '#f8fafc' }}
             itemStyle={{ color: '#f8fafc', fontWeight: 'bold' }}
-            formatter={(value) => [`$${value.toFixed(2)}`, 'Spent']}
+            formatter={(value) => viewMode === 'count'
+              ? [`${value} item${value === 1 ? '' : 's'}`, 'Purchased']
+              : [`$${value.toFixed(2)}`, 'Spent']
+            }
           />
-          <Bar dataKey="amount" radius={[4, 4, 0, 0]} maxBarSize={50}>
+          <Bar dataKey={viewMode === 'count' ? 'count' : 'amount'} radius={[4, 4, 0, 0]} maxBarSize={50}>
             {chartData.map((entry, index) => (
               <Cell key={`cell-${index}`} fill={getColorForTag(entry.name)} />
             ))}

@@ -32,6 +32,12 @@ def get_subscriptions():
             _advance(last_paid or sub["start_date"], sub["billing_cycle"])
             if sub["status"] == "active" else None
         )
+        # Convenience field so the frontend doesn't have to redo this
+        # arithmetic itself: how many payments are left before this
+        # subscription's own installment limit (if it has one) is hit.
+        sub["remaining_installments"] = (
+            max(0, sub["max_installments"] - count) if sub["max_installments"] is not None else None
+        )
 
     conn.close()
     return {"subscriptions": subs}
@@ -43,10 +49,10 @@ def create_subscription(sub: SubscriptionCreate):
     cursor = conn.cursor()
     cursor.execute(
         '''INSERT INTO subscriptions
-        (title, amount, type, billing_cycle, status, start_date, url, notes, tags, receipt_file)
-        VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)''',
+        (title, amount, type, billing_cycle, status, start_date, end_date, max_installments, url, notes, tags, receipt_file)
+        VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)''',
         (sub.title, sub.amount, sub.type, sub.billing_cycle, sub.start_date,
-         sub.url, sub.notes, sub.tags, sub.receipt_file)
+         sub.end_date, sub.max_installments, sub.url, sub.notes, sub.tags, sub.receipt_file)
     )
     conn.commit()
     sync_subscription_payments(conn)  # immediately materialize any already-due payment

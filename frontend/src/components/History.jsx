@@ -122,6 +122,24 @@ export default function History({ transactions, tagsList, onViewDetails }) {
     return 0;
   });
 
+  // Total spending across whatever is currently visible after ALL
+  // filters (search, type checkboxes, tag chips) — since it's derived
+  // straight from processedPurchases, it updates automatically with no
+  // separate state to keep in sync. Purchases add to it, refunds
+  // subtract, and deposits are ignored entirely (income isn't spending).
+  // Subscription payments need no special-casing — they're type:
+  // 'purchase' underneath, so they're already included.
+  const totalSpending = processedPurchases.reduce((sum, t) => {
+    if (t.type === 'purchase') return sum + t.amount;
+    if (t.type === 'refund') return sum - t.amount;
+    return sum;
+  }, 0);
+
+  const formatTotal = (val) => {
+    if (val < 0) return `-$${Math.abs(val).toFixed(2)}`;
+    return `$${val.toFixed(2)}`;
+  };
+
   // FIX: transactions.id and subscription_payments.id are two SEPARATE
   // AUTOINCREMENT sequences, each starting at 1 — so a one-off transaction
   // and a subscription payment can (and very often do) share the same raw
@@ -153,8 +171,14 @@ export default function History({ transactions, tagsList, onViewDetails }) {
   
   return (
     <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-      <div className="p-6 border-b border-slate-700">
+      <div className="p-6 border-b border-slate-700 flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-xl font-bold">Transaction History</h2>
+        <div className="text-right">
+          <p className="text-[11px] text-slate-500 uppercase font-semibold tracking-wider">Total Spending (filtered)</p>
+          <p className={`text-xl font-bold ${totalSpending >= 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+            {formatTotal(totalSpending)}
+          </p>
+        </div>
       </div>
 
       <div className="p-4 bg-slate-900 border-b border-slate-700 flex flex-col gap-4">
