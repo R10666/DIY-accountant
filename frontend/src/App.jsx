@@ -6,7 +6,7 @@ import Subscriptions from './components/Subscriptions';
 import EntryModal from './components/EntryModal';
 import TransactionDetails from './components/TransactionDetails';
 import TagsManager from './components/TagsManager';
-import { getTransactions, getTags, getSubscriptions } from './api';
+import { getTransactions, getTags, getSubscriptions, exportData, importData } from './api';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -36,6 +36,51 @@ export default function App() {
     fetchData();
   }, []);
 
+  // Export triggers a normal browser file download — fetch the full
+  // backup as JSON, wrap it in a Blob, and click a throwaway <a> tag,
+  // since that's the standard way to save arbitrary client-side data as
+  // a file without a server needing to set download headers.
+  const handleExport = async () => {
+    try {
+      const data = await exportData();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().split('T')[0];
+      a.href = url;
+      a.download = `diy-accountant-backup-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Failed to export data:", error);
+      alert(`Couldn't export your data: ${error.message}`);
+    }
+  };
+
+  // Import is a full replace, not a merge — the confirmation is
+  // deliberately explicit about that, since restoring a backup is not a
+  // reversible action.
+  const handleImport = async (file) => {
+    if (!file) return;
+
+    const confirmed = window.confirm(
+      "Importing will COMPLETELY REPLACE all current data (transactions, subscriptions, tags) with what's in this file. This can't be undone.\n\nMake sure this is really what you want before continuing."
+    );
+    if (!confirmed) return;
+
+    try {
+      const result = await importData(file);
+      const c = result.counts;
+      alert(`Restored successfully: ${c.transactions} transactions, ${c.subscriptions} subscriptions, ${c.subscription_payments} subscription payments, and ${c.tags} tags.`);
+      await fetchData();
+    } catch (error) {
+      console.error("Failed to import data:", error);
+      alert(`Couldn't restore from that file: ${error.message}`);
+    }
+  };
+
   const currentBalance = transactions.reduce((acc, curr) => {
     if (curr.type === 'deposit' || curr.type === 'adjustment' || curr.type === 'refund') return acc + curr.amount;
     return acc - curr.amount;
@@ -44,7 +89,7 @@ export default function App() {
   if (selectedTx) {
     return (
       <div className="min-h-screen bg-slate-900 text-slate-100 font-sans">
-        <Navigation activeTab={activeTab} setActiveTab={(tab) => { setActiveTab(tab); setSelectedTx(null); }} />
+        <Navigation activeTab={activeTab} setActiveTab={(tab) => { setActiveTab(tab); setSelectedTx(null); }} onExport={handleExport} onImport={handleImport} />
         <main className="max-w-7xl mx-auto p-6">
           <TransactionDetails t={selectedTx} tagsList={tags} onBack={() => setSelectedTx(null)} refreshData={fetchData} transactions={transactions} />
         </main>
@@ -54,7 +99,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans">
-      <Navigation activeTab={activeTab} setActiveTab={setActiveTab} />
+      <Navigation activeTab={activeTab} setActiveTab={setActiveTab} onExport={handleExport} onImport={handleImport} />
 
       <main className="max-w-7xl mx-auto p-6">
         {activeTab !== 'dashboard' && (

@@ -1,0 +1,13 @@
+# Committed default: anyone who clones this repo or visits a static
+# deploy of it (GitHub Pages, Netlify, etc.) gets browser-only storage
+# with zero setup — no backend required.
+#
+# To keep developing against the real FastAPI backend locally instead,
+# create a file called .env.local (NOT this one) in this same folder
+# with:
+#
+#     VITE_STORAGE_MODE=server
+#
+# .env.local is gitignored, so that override never gets pushed — it
+# only affects your own machine.
+VITE_STORAGE_MODE=local

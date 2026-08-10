@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from database import init_db, UPLOAD_DIR
-from routers import tags, transactions, subscriptions, misc
+from routers import tags, transactions, subscriptions, misc, backup
 
 app = FastAPI()
 
@@ -25,6 +25,7 @@ app.include_router(transactions.ledger_router)
 app.include_router(subscriptions.router)
 app.include_router(subscriptions.payments_router)
 app.include_router(misc.router)
+app.include_router(backup.router)
 
 
 @app.get("/")

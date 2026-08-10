@@ -16,8 +16,11 @@ backend/uploads/*
 # Logs
 *.log
 
-# Environment variables (for future-proofing)
-.env
+# Environment variables
+# NOTE: .env itself is intentionally NOT ignored — frontend/.env holds
+# the committed public default (VITE_STORAGE_MODE=local) that needs to
+# ship with the repo. .env.local is your personal override and stays
+# ignored, same for any .env.<mode>.local file.
 .env.local
 .env.*.local
 

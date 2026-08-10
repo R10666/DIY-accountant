@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Edit2, Check, RefreshCcw, ExternalLink, UploadCloud, Trash2, X, Maximize2 } from 'lucide-react';
-import { getLinkPreview, updateTransaction, updateSubscription, updateSubscriptionPayment, createTransaction, uploadFile, deleteTransaction, deleteSubscription } from '../api';
+import { getLinkPreview, updateTransaction, updateSubscription, updateSubscriptionPayment, createTransaction, uploadFile, deleteTransaction, deleteSubscription, getFileURL } from '../api';
 
 // Accepts `transactions` prop to generate the subscription payment history table
 export default function TransactionDetails({ t, tagsList, onBack, refreshData, transactions }) {
@@ -20,6 +20,7 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData, t
   const [preview, setPreview] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [showFullscreen, setShowFullscreen] = useState(false);
+  const [resolvedReceiptUrl, setResolvedReceiptUrl] = useState(null);
 
   const refunded = t.refunded_amount || 0;
   const isFullyRefunded = refunded >= t.amount;
@@ -48,6 +49,32 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData, t
         .catch(() => setPreview(null));
     }
   }, [t.url, isEditing]);
+
+  // t.receipt_file is now a reference like "idb-file:7", not a real URL —
+  // stored files live in IndexedDB and URL.createObjectURL() only
+  // produces a URL valid for the current page load, so it has to be
+  // re-derived from the stored Blob every time this component mounts or
+  // the reference changes, and cleaned up (revoked) when no longer needed.
+  useEffect(() => {
+    let cancelled = false;
+    let currentUrl = null;
+
+    if (t.receipt_file) {
+      getFileURL(t.receipt_file).then(url => {
+        if (!cancelled) {
+          currentUrl = url;
+          setResolvedReceiptUrl(url);
+        }
+      });
+    } else {
+      setResolvedReceiptUrl(null);
+    }
+
+    return () => {
+      cancelled = true;
+      if (currentUrl) URL.revokeObjectURL(currentUrl);
+    };
+  }, [t.receipt_file]);
 
   const toggleTag = (tagName) => {
     setFormData(prev => ({
@@ -344,12 +371,12 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData, t
                   </button>
                 </div>
                 {isPdf ? (
-                  <object data={t.receipt_file} type="application/pdf" className="w-full h-full">
-                    <p className="text-slate-400 p-4">PDF cannot be displayed. <a href={t.receipt_file} className="text-indigo-400 hover:underline" target="_blank" rel="noopener noreferrer">Download here</a>.</p>
+                  <object data={resolvedReceiptUrl} type="application/pdf" className="w-full h-full">
+                    <p className="text-slate-400 p-4">PDF cannot be displayed. <a href={resolvedReceiptUrl} className="text-indigo-400 hover:underline" target="_blank" rel="noopener noreferrer">Download here</a>.</p>
                   </object>
                 ) : (
                   <div onClick={() => setShowFullscreen(true)} className="w-full h-full cursor-zoom-in flex items-center justify-center p-2" title="Click to view full size">
-                    <img src={t.receipt_file} alt="Receipt" className="object-contain max-w-full max-h-full" />
+                    <img src={resolvedReceiptUrl} alt="Receipt" className="object-contain max-w-full max-h-full" />
                   </div>
                 )}
               </div>
@@ -419,11 +446,11 @@ export default function TransactionDetails({ t, tagsList, onBack, refreshData, t
           </button>
           <div className="w-full h-full max-w-5xl max-h-[90vh] flex items-center justify-center cursor-default" onClick={(e) => e.stopPropagation()} >
             {isPdf ? (
-              <object data={t.receipt_file} type="application/pdf" className="w-full h-full rounded-xl bg-white">
-                <p className="text-slate-800 p-4">PDF cannot be displayed. <a href={t.receipt_file} className="text-indigo-600 underline" target="_blank" rel="noopener noreferrer">Download here</a>.</p>
+              <object data={resolvedReceiptUrl} type="application/pdf" className="w-full h-full rounded-xl bg-white">
+                <p className="text-slate-800 p-4">PDF cannot be displayed. <a href={resolvedReceiptUrl} className="text-indigo-600 underline" target="_blank" rel="noopener noreferrer">Download here</a>.</p>
               </object>
             ) : (
-              <img src={t.receipt_file} alt="Fullscreen Receipt" className="object-contain w-full h-full rounded-xl" />
+              <img src={resolvedReceiptUrl} alt="Fullscreen Receipt" className="object-contain w-full h-full rounded-xl" />
             )}
           </div>
         </div>
