@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Navigation from './components/Navigation';
 import Dashboard from './components/Dashboard';
 import History from './components/History';
@@ -33,6 +33,14 @@ export default function App() {
   const [tags, setTags] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTx, setSelectedTx] = useState(null);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  // Guards the auto-open-on-empty check so it only ever evaluates once,
+  // on the true initial load — not on every refreshData() call after
+  // that (which happens constantly: after creating/editing/deleting
+  // anything). Without this, deleting your last remaining item later
+  // would pop the guide back open, which isn't "welcome, first-timer",
+  // it's just annoying.
+  const hasCheckedAutoHelp = useRef(false);
 
   const fetchData = async () => {
     try {
@@ -45,6 +53,12 @@ export default function App() {
       setTransactions(txData.transactions);
       setTags(tagsData.tags);
       setSubscriptions(subsData.subscriptions);
+
+      if (!hasCheckedAutoHelp.current) {
+        hasCheckedAutoHelp.current = true;
+        const isFirstEverVisit = txData.transactions.length === 0 && subsData.subscriptions.length === 0;
+        if (isFirstEverVisit) setIsHelpOpen(true);
+      }
     } catch (error) {
       console.error("Failed to fetch data:", error);
     }
@@ -107,7 +121,7 @@ export default function App() {
   if (selectedTx) {
     return (
       <div className="min-h-screen bg-slate-900 text-slate-100 font-sans">
-        <Navigation activeTab={activeTab} setActiveTab={(tab) => { setActiveTab(tab); setSelectedTx(null); }} onExport={handleExport} onImport={handleImport} />
+        <Navigation activeTab={activeTab} setActiveTab={(tab) => { setActiveTab(tab); setSelectedTx(null); }} onExport={handleExport} onImport={handleImport} isHelpOpen={isHelpOpen} onOpenHelp={() => setIsHelpOpen(true)} onCloseHelp={() => setIsHelpOpen(false)} />
         <main className="max-w-7xl mx-auto p-6">
           <TransactionDetails t={selectedTx} tagsList={tags} onBack={() => setSelectedTx(null)} refreshData={fetchData} transactions={transactions} />
         </main>
@@ -118,7 +132,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans">
-      <Navigation activeTab={activeTab} setActiveTab={setActiveTab} onExport={handleExport} onImport={handleImport} />
+      <Navigation activeTab={activeTab} setActiveTab={setActiveTab} onExport={handleExport} onImport={handleImport} isHelpOpen={isHelpOpen} onOpenHelp={() => setIsHelpOpen(true)} onCloseHelp={() => setIsHelpOpen(false)} />
 
       <main className="max-w-7xl mx-auto p-6">
         {activeTab !== 'dashboard' && (

@@ -1,10 +1,9 @@
-import React, { useRef, useState } from 'react';
-import { LayoutDashboard, History, Repeat, Trophy, Tag, Download, Upload, HelpCircle } from 'lucide-react';
+import React, { useRef } from 'react';
+import { LayoutDashboard, History, Repeat, Hammer, Tag, Download, Upload, HelpCircle } from 'lucide-react';
 import HelpModal from './HelpModal';
 
-export default function Navigation({ activeTab, setActiveTab, onExport, onImport }) {
+export default function Navigation({ activeTab, setActiveTab, onExport, onImport, isHelpOpen, onOpenHelp, onCloseHelp }) {
   const fileInputRef = useRef(null);
-  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
@@ -16,8 +15,8 @@ export default function Navigation({ activeTab, setActiveTab, onExport, onImport
     <nav className="w-full bg-slate-800 border-b border-slate-700 p-4 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Trophy className="text-slate-600" />
-          <h1 className="text-xl font-bold tracking-wider">FINANCE QUEST</h1>
+          <Hammer className="w-9 h-9 text-slate-100" />
+          <h1 className="text-xl font-bold tracking-wider">DIY ACCOUNTANT</h1>
         </div>
         
         <div className="flex items-center gap-2">
@@ -55,7 +54,7 @@ export default function Navigation({ activeTab, setActiveTab, onExport, onImport
               <Upload size={18} />
             </button>
             <button
-              onClick={() => setIsHelpOpen(true)}
+              onClick={onOpenHelp}
               title="Help / Quick Guide"
               className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
             >
@@ -72,7 +71,7 @@ export default function Navigation({ activeTab, setActiveTab, onExport, onImport
         </div>
       </div>
 
-      {isHelpOpen && <HelpModal onClose={() => setIsHelpOpen(false)} />}
+      {isHelpOpen && <HelpModal onClose={onCloseHelp} />}
     </nav>
   );
 }
