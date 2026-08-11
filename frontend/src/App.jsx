@@ -8,6 +8,24 @@ import TransactionDetails from './components/TransactionDetails';
 import TagsManager from './components/TagsManager';
 import { getTransactions, getTags, getSubscriptions, exportData, importData } from './api';
 
+// Read once, straight from the same setting api.js itself uses to pick
+// between localDB.js and api.server.js — so this badge can never say
+// something different from what the app is actually doing.
+const STORAGE_MODE = import.meta.env.VITE_STORAGE_MODE === 'server' ? 'server' : 'local';
+
+function StorageModeBadge() {
+  const isServer = STORAGE_MODE === 'server';
+  return (
+    <div
+      className="fixed bottom-3 right-3 z-[200] flex items-center gap-1.5 bg-slate-800/90 border border-slate-700 rounded-full px-3 py-1 text-[10px] font-medium text-slate-400 shadow-lg backdrop-blur-sm select-none"
+      title={isServer ? 'Connected to your local backend server — data lives in finance.db' : 'Data is stored only in this browser (IndexedDB) — export a backup to move it elsewhere'}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full ${isServer ? 'bg-indigo-400' : 'bg-emerald-400'}`} />
+      {isServer ? 'Local Server' : 'Browser Storage'}
+    </div>
+  );
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [transactions, setTransactions] = useState([]);
@@ -93,6 +111,7 @@ export default function App() {
         <main className="max-w-7xl mx-auto p-6">
           <TransactionDetails t={selectedTx} tagsList={tags} onBack={() => setSelectedTx(null)} refreshData={fetchData} transactions={transactions} />
         </main>
+        <StorageModeBadge />
       </div>
     );
   }
@@ -117,6 +136,7 @@ export default function App() {
       </main>
 
       {isModalOpen && <EntryModal availableTags={tags} closeModal={() => setIsModalOpen(false)} refreshData={fetchData} />}
+      <StorageModeBadge />
     </div>
   );
 }

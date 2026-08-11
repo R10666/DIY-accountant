@@ -1,8 +1,10 @@
-import React, { useRef } from 'react';
-import { LayoutDashboard, History, Repeat, Trophy, Tag, Download, Upload } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { LayoutDashboard, History, Repeat, Trophy, Tag, Download, Upload, HelpCircle } from 'lucide-react';
+import HelpModal from './HelpModal';
 
 export default function Navigation({ activeTab, setActiveTab, onExport, onImport }) {
   const fileInputRef = useRef(null);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
@@ -52,6 +54,13 @@ export default function Navigation({ activeTab, setActiveTab, onExport, onImport
             >
               <Upload size={18} />
             </button>
+            <button
+              onClick={() => setIsHelpOpen(true)}
+              title="Help / Quick Guide"
+              className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+            >
+              <HelpCircle size={18} />
+            </button>
             <input
               ref={fileInputRef}
               type="file"
@@ -62,6 +71,8 @@ export default function Navigation({ activeTab, setActiveTab, onExport, onImport
           </div>
         </div>
       </div>
+
+      {isHelpOpen && <HelpModal onClose={() => setIsHelpOpen(false)} />}
     </nav>
   );
 }
